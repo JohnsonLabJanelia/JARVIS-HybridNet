@@ -46,14 +46,14 @@ class Dataset2D(BaseDataset):
         assert cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE % 64 == 0, \
                     "Bounding Box size has to be divisible by 64!"
 
-        img = self._load_image(0)
-        width, height = img.shape[1], img.shape[0]
-        cfg.DATASET.IMAGE_SIZE = [width,height]
+        # img = self._load_image(0)
+        # width, height = img.shape[1], img.shape[0]
+        # cfg.DATASET.IMAGE_SIZE = [width,height]
 
         if self.mode == 'CenterDetect':
             cfg.CENTERDETECT.NUM_JOINTS = 1
-            img = self._load_image(0)
-            self.width, self.height = img.shape[1], img.shape[0]
+            # img = self._load_image(0)
+            # self.width, self.height = img.shape[1], img.shape[0]
 
             self.heatmap_generators = []
             output_sizes = [[int(self.cfg.CENTERDETECT.IMAGE_SIZE/4),
@@ -148,9 +148,11 @@ class Dataset2D(BaseDataset):
         else:
             center = np.array([[0.0,0.0,1.0]])
         keypoints = center
+        width, height = img.shape[1], img.shape[0]
+
         keypoints_iaa = KeypointsOnImage(
                     [Keypoint(x=center[0][0], y=center[0][1])],
-                    shape=(self.height,self.width,3))
+                    shape=(height,width,3))
         img, keypoints_aug = self.augpipe(image=img, keypoints = keypoints_iaa)
         center[0][0] = keypoints_aug[0].x
         center[0][1] = keypoints_aug[0].y

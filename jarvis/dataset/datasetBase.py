@@ -92,13 +92,14 @@ class BaseDataset(Dataset):
             file_name = self.imgs[image_index]['file_name']
         else:
             file_name = self.imgs[self.image_ids[image_index]]['file_name']
+        print(file_name)
         path = os.path.join(self.root_dir, self.set_name, file_name)
         img = cv2.imread(path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32) / 255.
         return img
 
-
+    
     def _load_annotations(self, image_index, is_id = False):
         if is_id:
             annotations_ids = [ann['id'] for ann in self.imgToAnns[image_index]]
