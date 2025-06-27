@@ -43,9 +43,9 @@ class Dataset3D(BaseDataset):
         dataset_name = cfg.DATASET.DATASET_3D
         super().__init__(cfg, dataset_name, set, **kwargs)
 
-        img = self._load_image(0)
-        width, height = img.shape[1], img.shape[0]
-        cfg.DATASET.IMAGE_SIZE = [width,height]
+        # img = self._load_image(0)
+        # width, height = img.shape[1], img.shape[0]
+        # cfg.DATASET.IMAGE_SIZE = [width,height]
 
         self.reproTools = {}
         for calibParams in self.dataset['calibrations']:
@@ -57,7 +57,7 @@ class Dataset3D(BaseDataset):
             self.reproTools[calibParams] = ReprojectionTool(
                         os.path.join(cfg.PARENT_DIR, self.root_dir), calibPaths)
             self.num_cameras = self.reproTools[calibParams].num_cameras
-            self.reproTools[calibParams].resolution = [width,height]
+            # self.reproTools[calibParams].resolution = [width,height]
 
         cfg.HYBRIDNET.NUM_CAMERAS = self.num_cameras
 
@@ -180,9 +180,9 @@ class Dataset3D(BaseDataset):
         img_l = np.zeros((self.num_cameras,
                           self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE,
                           self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE,3))
-        if self.analysisMode:
-            img = self._load_image(0)
-            img_l = np.zeros((self.num_cameras,img.shape[0],img.shape[1],3))
+        # if self.analysisMode:
+        #     img = self._load_image(0)
+        #     img_l = np.zeros((self.num_cameras,img.shape[0],img.shape[1],3))
 
         centerHM = np.full((self.num_cameras, 2), 128, dtype = int)
         bbox_hw = int(self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE/2)

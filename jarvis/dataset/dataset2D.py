@@ -84,11 +84,11 @@ class Dataset2D(BaseDataset):
     def _build_augpipe(self):
         augmentors = []
         if self.mode == 'CenterDetect':
-            img = self._load_image(0)
-            width, height = img.shape[1], img.shape[0]
-            scale = 1./self.cfg.CENTERDETECT.IMAGE_SIZE
-            self.scale_width = float(width)/self.cfg.CENTERDETECT.IMAGE_SIZE
-            self.scale_height = float(height)/self.cfg.CENTERDETECT.IMAGE_SIZE
+            # img = self._load_image(0)
+            # width, height = img.shape[1], img.shape[0]
+            # scale = 1./self.cfg.CENTERDETECT.IMAGE_SIZE
+            # self.scale_width = float(width)/self.cfg.CENTERDETECT.IMAGE_SIZE
+            # self.scale_height = float(height)/self.cfg.CENTERDETECT.IMAGE_SIZE
 
             augmentors.append(iaa.Resize(self.cfg.CENTERDETECT.IMAGE_SIZE,
                         interpolation='linear'))

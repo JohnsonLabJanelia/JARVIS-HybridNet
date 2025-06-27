@@ -207,8 +207,8 @@ class HybridNet:
                 cameraMatrices = cameraMatrices.cuda()
                 intrinsicMatrices = intrinsicMatrices.cuda()
                 distortionCoefficients = distortionCoefficients.cuda()
-                img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).cuda()
-
+                #img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).cuda()
+                img_size = torch.tensor([4512, 4512]).cuda()
 
                 self.optimizer.zero_grad()
                 outputs = self.model(imgs,
@@ -295,8 +295,9 @@ class HybridNet:
                         cameraMatrices = cameraMatrices.cuda()
                         intrinsicMatrices = intrinsicMatrices.cuda()
                         distortionCoefficients = distortionCoefficients.cuda()
-                        img_size = torch.tensor(
-                                    self.cfg.DATASET.IMAGE_SIZE).cuda()
+                        # img_size = torch.tensor(
+                        #             self.cfg.DATASET.IMAGE_SIZE).cuda()
+                        img_size = torch.tensor([4512, 4512]).cuda()
 
                         outputs = self.model(imgs,
                                              img_size,
