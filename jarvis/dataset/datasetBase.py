@@ -8,7 +8,7 @@ This implementation is strongly inspired and partially taken from pycocotools
 (https://github.com/cocodataset/cocoapi/tree/master/PythonAPI/pycocotools)
 """
 
-import os,sys,inspect
+import os, sys, inspect
 import torch
 import numpy as np
 import cv2
@@ -17,8 +17,9 @@ from collections import defaultdict
 
 from torch.utils.data import Dataset
 
-current_dir = os.path.dirname(os.path.abspath(
-                              inspect.getfile(inspect.currentframe())))
+current_dir = os.path.dirname(
+    os.path.abspath(inspect.getfile(inspect.currentframe()))
+)
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
@@ -37,95 +38,106 @@ class BaseDataset(Dataset):
                 to training split.
     :type set: string
     """
-    def __init__(self, cfg, dataset_name,set='train', **kwargs):
+
+    def __init__(self, cfg, dataset_name, set="train", **kwargs):
         self.cameras_to_use = None
-        if 'cameras_to_use' in kwargs:
-            self.cameras_to_use = kwargs['cameras_to_use']
+        if "cameras_to_use" in kwargs:
+            self.cameras_to_use = kwargs["cameras_to_use"]
         self.cfg = cfg
         if os.path.isabs(dataset_name):
             self.root_dir = dataset_name
         else:
-            self.root_dir = os.path.join(cfg.PARENT_DIR,
-                        cfg.DATASET.DATASET_ROOT_DIR, dataset_name)
+            self.root_dir = os.path.join(
+                cfg.PARENT_DIR, cfg.DATASET.DATASET_ROOT_DIR, dataset_name
+            )
 
         self.set_name = set
 
-        dataset_file = open(os.path.join(self.root_dir, 'annotations',
-                    'instances_' + self.set_name + '.json'))
+        dataset_file = open(
+            os.path.join(
+                self.root_dir,
+                "annotations",
+                "instances_" + self.set_name + ".json",
+            )
+        )
         self.dataset = json.load(dataset_file)
 
         self.num_keypoints = []
-        for category in self.dataset['categories']:
-            self.num_keypoints.append(category['num_keypoints'])
+        for category in self.dataset["categories"]:
+            self.num_keypoints.append(category["num_keypoints"])
         if self.cameras_to_use != None:
-            self.image_ids = [img["id"] for img in self.dataset["images"]
-                    if img['file_name'].split("/")[-2] in self.cameras_to_use]
+            self.image_ids = [
+                img["id"]
+                for img in self.dataset["images"]
+                if img["file_name"].split("/")[-2] in self.cameras_to_use
+            ]
         else:
             self.image_ids = [img["id"] for img in self.dataset["images"]]
 
-        self.annotations,self.categories,self.imgs = dict(),dict(),dict()
+        self.annotations, self.categories, self.imgs = dict(), dict(), dict()
         self.imgToAnns = defaultdict(list)
         self.createIndex()
 
-
     def createIndex(self):
-        if 'annotations' in self.dataset:
-            for ann in self.dataset['annotations']:
-                self.imgToAnns[ann['image_id']].append(ann)
-                self.annotations[ann['id']] = ann
+        if "annotations" in self.dataset:
+            for ann in self.dataset["annotations"]:
+                self.imgToAnns[ann["image_id"]].append(ann)
+                self.annotations[ann["id"]] = ann
 
-        if 'images' in self.dataset:
-            for img in self.dataset['images']:
-                self.imgs[img['id']] = img
+        if "images" in self.dataset:
+            for img in self.dataset["images"]:
+                self.imgs[img["id"]] = img
 
-        if 'categories' in self.dataset:
-            for cat in self.dataset['categories']:
-                self.categories[cat['id']] = cat
-
+        if "categories" in self.dataset:
+            for cat in self.dataset["categories"]:
+                self.categories[cat["id"]] = cat
 
     def __len__(self):
         return len(self.image_ids)
 
-
-    def _load_image(self, image_index, is_id = False):
+    def _load_image(self, image_index, is_id=False):
         if is_id:
-            file_name = self.imgs[image_index]['file_name']
+            file_name = self.imgs[image_index]["file_name"]
         else:
-            file_name = self.imgs[self.image_ids[image_index]]['file_name']
-        print(file_name)
+            file_name = self.imgs[self.image_ids[image_index]]["file_name"]
+        # print(file_name)
         path = os.path.join(self.root_dir, self.set_name, file_name)
         img = cv2.imread(path)
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        img = img.astype(np.float32) / 255.
+        img = img.astype(np.float32) / 255.0
         return img
 
-    
-    def _load_annotations(self, image_index, is_id = False):
+    def _load_annotations(self, image_index, is_id=False):
         if is_id:
-            annotations_ids = [ann['id'] for ann in self.imgToAnns[image_index]]
+            annotations_ids = [
+                ann["id"] for ann in self.imgToAnns[image_index]
+            ]
         else:
-            annotations_ids = [ann['id']
-                        for ann in self.imgToAnns[self.image_ids[image_index]]]
+            annotations_ids = [
+                ann["id"]
+                for ann in self.imgToAnns[self.image_ids[image_index]]
+            ]
         annotations = np.zeros((0, 5))
-        keypoints = np.zeros((0,self.num_keypoints[0]*3))
+        keypoints = np.zeros((0, self.num_keypoints[0] * 3))
 
         if len(annotations_ids) == 0:
             annotations = np.zeros((1, 5))
             annotations[0][4] = -1
-            keypoints = np.zeros((1,self.num_keypoints[0]*3))
+            keypoints = np.zeros((1, self.num_keypoints[0] * 3))
             return annotations, keypoints
 
         coco_annotations = self._loadAnns(annotations_ids)
 
         for idx, a in enumerate(coco_annotations):
             annotation = np.zeros((1, 5))
-            annotation[0, :4] = a['bbox']
+            annotation[0, :4] = a["bbox"]
             for i in range(len(annotation)):
                 annotation[i] /= 1
-            annotation[0, 4] = a['category_id'] - 1
+            annotation[0, 4] = a["category_id"] - 1
             annotations = np.append(annotations, annotation, axis=0)
-            keypoint = np.array(a['keypoints']).reshape(1,
-                        self.num_keypoints[0]*3)
+            keypoint = np.array(a["keypoints"]).reshape(
+                1, self.num_keypoints[0] * 3
+            )
             keypoints = np.append(keypoints, keypoint, axis=0)
 
         # transform from [x, y, w, h] to [x1, y1, x2, y2]
@@ -133,7 +145,6 @@ class BaseDataset(Dataset):
         annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
 
         return annotations, keypoints
-
 
     def _loadAnns(self, ids=[]):
         """
