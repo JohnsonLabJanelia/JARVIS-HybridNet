@@ -103,6 +103,12 @@ def predict3D(params):
         #     / 255.0
         # )
 
+        # for i, img in enumerate(imgs_orig):
+        #     img_resize = cv2.resize(img, (800, 400))
+        #     cv2.imshow(f"Image {i}", img_resize)
+        #     cv2.waitKey(1000)  # Display each image for 500 ms
+        # cv2.destroyAllWindows()
+
         points3D_net, confidences = jarvisPredictor(
             imgs_orig,
             reproTool.cameraMatrices.cuda(),
@@ -193,3 +199,12 @@ def create_info_file(params):
             },
             file,
         )
+
+
+if __name__ == "__main__":
+    from jarvis.utils.paramClasses import Predict3DParams
+
+    project_name = "remux_swc"
+    recording_path = "/mnt/data/swc_remux/short"
+    params = Predict3DParams(project_name, recording_path)
+    predict3D(params)

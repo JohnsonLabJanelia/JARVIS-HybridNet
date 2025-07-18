@@ -269,7 +269,12 @@ class JarvisPredictor3D(nn.Module):
                 [w, h], dtype=torch.float32, device="cuda"
             )
             downsampling_scale[i] = torch.tensor(
-                [w, h], dtype=torch.float32, device="cuda"
+                [
+                    w / float(self.center_detect_img_size),
+                    h / float(self.center_detect_img_size),
+                ],
+                dtype=torch.float32,
+                device="cuda",
             )
 
             img_tensor = (
