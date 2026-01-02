@@ -65,7 +65,11 @@ class BaseDataset(Dataset):
 
         self.annotations,self.categories,self.imgs = dict(),dict(),dict()
         self.imgToAnns = defaultdict(list)
+        self.variation_to_base_id = {}  # Initialize mapping for variations
         self.createIndex()
+        
+        # Expand dataset to include all frame variations
+        self._expand_frame_variations()
 
 
     def createIndex(self):
@@ -101,10 +105,15 @@ class BaseDataset(Dataset):
 
     def _load_annotations(self, image_index, is_id = False):
         if is_id:
-            annotations_ids = [ann['id'] for ann in self.imgToAnns[image_index]]
+            # Check if this is a variation and map to base image_id
+            actual_id = self.variation_to_base_id.get(image_index, image_index)
+            annotations_ids = [ann['id'] for ann in self.imgToAnns[actual_id]]
         else:
+            # Check if this is a variation and map to base image_id
+            actual_id = self.image_ids[image_index]
+            actual_id = self.variation_to_base_id.get(actual_id, actual_id)
             annotations_ids = [ann['id']
-                        for ann in self.imgToAnns[self.image_ids[image_index]]]
+                        for ann in self.imgToAnns[actual_id]]
         annotations = np.zeros((0, 5))
         keypoints = np.zeros((0,self.num_keypoints[0]*3))
 
@@ -141,3 +150,75 @@ class BaseDataset(Dataset):
         :return: anns (object array) : loaded ann objects
         """
         return [self.annotations[id] for id in ids]
+    
+    def _expand_frame_variations(self):
+        """
+        Expand the dataset to include all frame variations (e.g., Frame_0_black.jpg,
+        Frame_0_blur_light.jpg, etc.) in addition to the base frames.
+        All variations share the same annotations as their base frame.
+        """
+        # Common variation suffixes found in the dataset
+        variation_suffixes = [
+            '_black', '_blur', '_blur_light', '_blur_strong', '_brighten',
+            '_color_shift', '_darken', '_desaturate', '_desaturate_partial',
+            '_gray', '_noise', '_remove'
+        ]
+        
+        # Get the maximum existing image ID to assign new IDs
+        max_id = max([img["id"] for img in self.dataset["images"]]) if self.dataset["images"] else -1
+        new_image_id = max_id + 1
+        
+        # Process each base image
+        base_images = list(self.imgs.values())
+        for base_img in base_images:
+            base_file_name = base_img['file_name']
+            base_id = base_img['id']
+            
+            # Extract base frame name (e.g., "Frame_0.jpg" -> "Frame_0")
+            file_path_parts = base_file_name.split("/")
+            base_frame_name = file_path_parts[-1]  # e.g., "Frame_0.jpg"
+            base_frame_name_no_ext = base_frame_name.rsplit(".", 1)[0]  # e.g., "Frame_0"
+            
+            # Construct directory path
+            if len(file_path_parts) > 1:
+                dir_path = "/".join(file_path_parts[:-1])  # e.g., "2024_11_22_12_28_24/Cam2002486"
+            else:
+                dir_path = ""
+            
+            # Check for variations in the actual directory
+            full_dir_path = os.path.join(self.root_dir, self.set_name, dir_path)
+            if os.path.exists(full_dir_path):
+                # Get all files in the directory
+                try:
+                    files_in_dir = os.listdir(full_dir_path)
+                    # Find all variations of this base frame
+                    for filename in files_in_dir:
+                        if filename.startswith(base_frame_name_no_ext + "_") and filename.endswith(".jpg"):
+                            # Extract variation suffix (e.g., "_black" from "Frame_0_black.jpg")
+                            variation_suffix = filename[len(base_frame_name_no_ext):-4]  # Remove base name and ".jpg"
+                            
+                            # Create variation file_name
+                            if dir_path:
+                                variation_file_name = f"{dir_path}/{filename}"
+                            else:
+                                variation_file_name = filename
+                            
+                            # Create new image entry for this variation
+                            variation_img = base_img.copy()
+                            variation_img['id'] = new_image_id
+                            variation_img['file_name'] = variation_file_name
+                            
+                            # Store in imgs dict
+                            self.imgs[new_image_id] = variation_img
+                            
+                            # Map variation to base image_id for annotation lookup
+                            self.variation_to_base_id[new_image_id] = base_id
+                            
+                            # Add to image_ids if the base image was included
+                            if base_id in self.image_ids:
+                                self.image_ids.append(new_image_id)
+                            
+                            new_image_id += 1
+                except (OSError, PermissionError):
+                    # If we can't read the directory, skip it
+                    pass
