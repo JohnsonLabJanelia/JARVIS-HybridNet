@@ -32,7 +32,6 @@ class ReprojectionLayer(nn.Module):
                     self.grid[i,j,k] = torch.tensor([i - half_gridsize,
                                                      j - half_gridsize,
                                                      k - half_gridsize])
-        self.grid = self.grid.cuda()
         self.grid = self.grid * self.grid_spacing*2
         self.heatmap_size = int(self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE/2+2)
 
@@ -44,7 +43,7 @@ class ReprojectionLayer(nn.Module):
       centerHM = centerHM.permute(1,0)
 
       ones = torch.ones([x.shape[0], x.shape[1], x.shape[2],1],
-                device=torch.device('cuda'))
+                device=x.device)
       x = torch.cat((x,ones),3)
 
       partial_all = torch.matmul(x.view(1,-1,4), cameraMatrices).view(-1,
@@ -95,7 +94,7 @@ class ReprojectionLayer(nn.Module):
         heatmap_size =  heatmaps.shape[2];
         grid_size =  reproPoints.shape[2];
         cam_offset = torch.arange(0,heatmap_size*heatmap_size*num_cameras,
-                    heatmap_size*heatmap_size, device = torch.device('cuda'))
+                    heatmap_size*heatmap_size, device = heatmaps.device)
 
         heatmaps = heatmaps.flatten(1);
         reproPoints = (reproPoints.flatten(1).transpose(1,0)
@@ -110,7 +109,7 @@ class ReprojectionLayer(nn.Module):
     def forward(self, heatmaps, center, centerHM, cameraMatrices,
                 intrinsicMatrices, distortionCoefficients):
         # for batch in range(heatmaps.shape[0]):
-        grid = self.grid+center[0]
+        grid = self.grid.to(heatmaps.device)+center[0]
         heatmaps3D = self._get_heatmap_value(torch.transpose(
                     heatmaps[0], 0,1), grid, cameraMatrices[0],
                     intrinsicMatrices[0], distortionCoefficients[0],

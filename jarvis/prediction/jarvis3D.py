@@ -14,6 +14,7 @@ from torchvision import transforms
 from jarvis.efficienttrack.efficienttrack import EfficientTrack
 from jarvis.hybridnet.hybridnet import HybridNet
 from jarvis.utils.reprojection import ReprojectionTool
+from jarvis.utils.device_utils import get_device
 
 
 class JarvisPredictor3D(nn.Module):
@@ -21,6 +22,7 @@ class JarvisPredictor3D(nn.Module):
                 weights_hybridnet = 'latest', trt_mode = 'off'):
         super(JarvisPredictor3D, self).__init__()
         self.cfg = cfg
+        self.device = get_device()
 
         self.centerDetect = EfficientTrack('CenterDetectInference', self.cfg,
                     weights_center_detect).model
@@ -29,9 +31,9 @@ class JarvisPredictor3D(nn.Module):
 
 
         self.transform_mean = torch.tensor(self.cfg.DATASET.MEAN,
-                    device = torch.device('cuda')).view(3,1,1)
+                    device = self.device).view(3,1,1)
         self.transform_std = torch.tensor(self.cfg.DATASET.STD,
-                    device = torch.device('cuda')).view(3,1,1)
+                    device = self.device).view(3,1,1)
         self.bbox_hw = int(self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE/2)
         self.num_cameras = self.cfg.HYBRIDNET.NUM_CAMERAS
         self.bounding_box_size = self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE
@@ -39,9 +41,10 @@ class JarvisPredictor3D(nn.Module):
         self.reproTool = ReprojectionTool()
         self.center_detect_img_size = int(self.cfg.CENTERDETECT.IMAGE_SIZE)
 
-        if trt_mode == 'new':
+        if trt_mode != 'off' and not torch.cuda.is_available():
+            print("Warning: TensorRT requires CUDA. Ignoring trt_mode on this device.")
+        elif trt_mode == 'new':
             self.compile_trt_models()
-
         elif trt_mode == 'previous':
             self.load_trt_models()
 
@@ -83,11 +86,11 @@ class JarvisPredictor3D(nn.Module):
                     self.cfg.PROJECT_NAME, 'trt-models', 'predict3D')
         os.makedirs(trt_path, exist_ok = True)
 
-        self.centerDetect = self.centerDetect.eval().cuda()
+        self.centerDetect = self.centerDetect.eval().to(self.device)
         print("h0")
 
         traced_model = torch.jit.trace(self.centerDetect,
-                    [torch.randn((1, 3, 256, 256)).to("cuda")])
+                    [torch.randn((1, 3, 256, 256)).to(self.device)])
         print("h1")
 
         self.centerDetect = torch_tensorrt.compile(traced_model,
@@ -101,10 +104,10 @@ class JarvisPredictor3D(nn.Module):
         torch.jit.save(self.centerDetect,
                     os.path.join(trt_path, 'centerDetect.pt'))
 
-        self.hybridNet.effTrack.eval().cuda()
+        self.hybridNet.effTrack.eval().to(self.device)
         traced_model = torch.jit.trace(self.hybridNet.effTrack,
                     [torch.randn((1, 3, self.bounding_box_size,
-                    self.bounding_box_size)).to("cuda")])
+                    self.bounding_box_size)).to(self.device)])
         self.hybridNet.effTrack = torch_tensorrt.compile(traced_model,
             inputs= [torch_tensorrt.Input((self.cfg.HYBRIDNET.NUM_CAMERAS,
                         3, self.bounding_box_size, self.bounding_box_size),
@@ -115,12 +118,12 @@ class JarvisPredictor3D(nn.Module):
                     os.path.join(trt_path, 'keypointDetect.pt'))
 
 
-        self.hybridNet.v2vNet.eval().cuda()
+        self.hybridNet.v2vNet.eval().to(self.device)
         grid_size = int(self.cfg.HYBRIDNET.ROI_CUBE_SIZE /
                     self.cfg.HYBRIDNET.GRID_SPACING)
         traced_model = torch.jit.trace(self.hybridNet.v2vNet,
                     [torch.randn((1, self.cfg.KEYPOINTDETECT.NUM_JOINTS,
-                    grid_size, grid_size, grid_size)).to("cuda")])
+                    grid_size, grid_size, grid_size)).to(self.device)])
         self.hybridNet.v2vNet = torch_tensorrt.compile(traced_model,
         inputs= [torch_tensorrt.Input((1, self.cfg.KEYPOINTDETECT.NUM_JOINTS,
                     grid_size, grid_size,grid_size), dtype=torch.float)],
@@ -138,12 +141,12 @@ class JarvisPredictor3D(nn.Module):
         self.reproTool.distortionCoefficients = distortionCoefficients
 
         img_size = torch.tensor([imgs.shape[3], imgs.shape[2]],
-                    device = torch.device('cuda'))
+                    device = self.device)
 
         downsampling_scale = torch.tensor([
                     imgs.shape[3] / float(self.center_detect_img_size),
                     imgs.shape[2]/float(self.center_detect_img_size)],
-                    device = torch.device('cuda')).float()
+                    device = self.device).float()
 
         imgs_resized = transforms.functional.resize(imgs,
                     [self.center_detect_img_size,self.center_detect_img_size])
@@ -172,7 +175,7 @@ class JarvisPredictor3D(nn.Module):
 
             imgs_cropped = torch.zeros((self.num_cameras,3,
                         self.bounding_box_size, self.bounding_box_size),
-                        device = torch.device('cuda'))
+                        device = self.device)
 
             for i in range(self.num_cameras):
                 imgs_cropped[i] = imgs[i,:,

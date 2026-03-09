@@ -16,12 +16,14 @@ from jarvis.utils.utils import CLIColors
 from jarvis.utils.reprojection import load_reprojection_tools
 from jarvis.dataset.dataset3D import Dataset3D
 from jarvis.prediction.jarvis3D import JarvisPredictor3D
+from jarvis.utils.device_utils import get_device
 from torch.utils.data import DataLoader
 
 
 def analyze_validation_data(project_name, weights_center = 'latest',
             weights_hybridnet = 'latest', cameras_to_use = None,
             progress_bar = None):
+    device = get_device()
     project = ProjectManager()
     project.load(project_name)
     cfg = project.get_cfg()
@@ -63,12 +65,12 @@ def analyze_validation_data(project_name, weights_center = 'latest',
         reproTool = reproTools[dataset_name]
         file_name = sample[-1][0]
 
-        imgs = imgs_orig.cuda().float().permute(0,3,1,2)
+        imgs = imgs_orig.to(device).float().permute(0,3,1,2)
 
         points3D_net, _ = jarvisPredictor(imgs,
-                    reproTool.cameraMatrices.cuda(),
-                    reproTool.intrinsicMatrices.cuda(),
-                    reproTool.distortionCoefficients.cuda())
+                    reproTool.cameraMatrices.to(device),
+                    reproTool.intrinsicMatrices.to(device),
+                    reproTool.distortionCoefficients.to(device))
 
         if points3D_net != None:
             points3D_net = points3D_net[0].cpu().detach().numpy()

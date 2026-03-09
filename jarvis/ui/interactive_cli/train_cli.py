@@ -20,7 +20,9 @@ def cls():
 
 
 def check_gpus():
-    if (torch.cuda.device_count() == 0):
+    has_gpu = (torch.cuda.device_count() > 0
+               or torch.backends.mps.is_available())
+    if not has_gpu:
         clp.error('Aborting! You can only run this on a computer '
                     'that has at least one GPU...')
         print ()

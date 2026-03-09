@@ -51,7 +51,8 @@ def get_latest_weights_efficienttrack(cfg, mode):
 
 def train_efficienttrack(mode, project_name, num_epochs, weights,
             streamlitWidgets = None, **kwargs):
-    torch.backends.cudnn.benchmark = True
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
     camera_list = None
     run_name = None
     if 'cameras_to_use' in kwargs:

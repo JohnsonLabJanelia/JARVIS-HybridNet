@@ -22,6 +22,7 @@ from .loss import MSELoss
 import jarvis.utils.utils as utils
 from jarvis.utils.logger import NetLogger, AverageMeter
 import jarvis.utils.clp as clp
+from jarvis.utils.device_utils import get_device
 
 import warnings
 #Filter out weird pytorch floordiv deprecation warning, don't know where it's
@@ -44,6 +45,7 @@ class HybridNet:
                  run_name = None):
         self.mode = mode
         self.cfg = cfg
+        self.device = get_device()
         self.model = HybridNetBackbone(cfg, efficienttrack_weights)
 
         if mode  == 'train':
@@ -62,7 +64,7 @@ class HybridNet:
             self.load_weights(weights)
 
             self.criterion = MSELoss()
-            self.model = self.model.cuda()
+            self.model = self.model.to(self.device)
 
             if self.cfg.HYBRIDNET.OPTIMIZER == 'adamw':
                 self.optimizer = torch.optim.AdamW(self.model.parameters(),
@@ -78,7 +80,7 @@ class HybridNet:
             self.load_weights(weights)
             self.model.requires_grad_(False)
             self.model.eval()
-            self.model = self.model.cuda()
+            self.model = self.model.to(self.device)
 
 
     def load_weights(self, weights_path = None):
@@ -86,7 +88,8 @@ class HybridNet:
             weights_path =  self.get_latest_weights()
         if weights_path is not None:
             if os.path.isfile(weights_path):
-                state_dict = torch.load(weights_path)
+                state_dict = torch.load(weights_path,
+                            map_location=self.device)
                 self.model.load_state_dict(state_dict, strict=True)
                 clp.info(f'Loaded Hybridnet weights: {weights_path}')
                 return True
@@ -101,11 +104,8 @@ class HybridNet:
         weights_path = os.path.join(self.cfg.PARENT_DIR, 'pretrained',
                     pose, weights_name)
         if os.path.isfile(weights_path):
-            if torch.cuda.is_available():
-                pretrained_dict = torch.load(weights_path)
-            else:
-                pretrained_dict = torch.load(weights_path,
-                            map_location=torch.device('cpu'))
+            pretrained_dict = torch.load(weights_path,
+                        map_location=self.device)
             #TODO Add check for correct number of joints
             self.model.load_state_dict(pretrained_dict, strict=True)
             clp.info(f'Successfully loaded {pose} weights: {weights_path}')
@@ -199,15 +199,15 @@ class HybridNet:
                 intrinsicMatrices = data[6]
                 distortionCoefficients = data[7]
 
-                imgs = imgs.cuda()
-                keypoints = keypoints.cuda()
-                centerHM = centerHM.cuda()
-                center3D = center3D.cuda()
-                heatmap3D = heatmap3D.cuda()
-                cameraMatrices = cameraMatrices.cuda()
-                intrinsicMatrices = intrinsicMatrices.cuda()
-                distortionCoefficients = distortionCoefficients.cuda()
-                img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).cuda()
+                imgs = imgs.to(self.device)
+                keypoints = keypoints.to(self.device)
+                centerHM = centerHM.to(self.device)
+                center3D = center3D.to(self.device)
+                heatmap3D = heatmap3D.to(self.device)
+                cameraMatrices = cameraMatrices.to(self.device)
+                intrinsicMatrices = intrinsicMatrices.to(self.device)
+                distortionCoefficients = distortionCoefficients.to(self.device)
+                img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).to(self.device)
 
 
                 self.optimizer.zero_grad()
@@ -287,16 +287,16 @@ class HybridNet:
                         intrinsicMatrices = data[6]
                         distortionCoefficients = data[7]
 
-                        imgs = imgs.cuda()
-                        keypoints = keypoints.cuda()
-                        centerHM = centerHM.cuda()
-                        center3D = center3D.cuda()
-                        heatmap3D = heatmap3D.cuda()
-                        cameraMatrices = cameraMatrices.cuda()
-                        intrinsicMatrices = intrinsicMatrices.cuda()
-                        distortionCoefficients = distortionCoefficients.cuda()
+                        imgs = imgs.to(self.device)
+                        keypoints = keypoints.to(self.device)
+                        centerHM = centerHM.to(self.device)
+                        center3D = center3D.to(self.device)
+                        heatmap3D = heatmap3D.to(self.device)
+                        cameraMatrices = cameraMatrices.to(self.device)
+                        intrinsicMatrices = intrinsicMatrices.to(self.device)
+                        distortionCoefficients = distortionCoefficients.to(self.device)
                         img_size = torch.tensor(
-                                    self.cfg.DATASET.IMAGE_SIZE).cuda()
+                                    self.cfg.DATASET.IMAGE_SIZE).to(self.device)
 
                         outputs = self.model(imgs,
                                              img_size,

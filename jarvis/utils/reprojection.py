@@ -12,10 +12,14 @@ import cv2
 import torch
 import torch.nn as nn
 
+from jarvis.utils.device_utils import get_device
+
 
 class ReprojectionTool(nn.Module):
-    def __init__(self, root_dir = None, calib_paths = None, device = 'cuda'):
+    def __init__(self, root_dir = None, calib_paths = None, device = None):
         super(ReprojectionTool, self).__init__()
+        if device is None:
+            device = get_device()
         self.device = device
         if calib_paths != None:
             self.cameras = {}
@@ -91,8 +95,10 @@ class ReprojectionTool(nn.Module):
 
 
 class TorchCamera(nn.Module):
-    def __init__(self, name, calib_path, device = 'cuda'):
+    def __init__(self, name, calib_path, device = None):
         super(TorchCamera, self).__init__()
+        if device is None:
+            device = get_device()
         self.name = name
         self.position = torch.from_numpy(self.get_mat_from_file(
                     calib_path, 'T')).float().to(device)
@@ -112,7 +118,9 @@ class TorchCamera(nn.Module):
 
 
 
-def get_repro_tool(cfg, dataset_name, device = 'cuda'):
+def get_repro_tool(cfg, dataset_name, device = None):
+    if device is None:
+        device = get_device()
     reproTools = load_reprojection_tools(cfg, device = device)
     if dataset_name != None and not dataset_name in reproTools:
         if os.path.isdir(dataset_name):
@@ -158,7 +166,9 @@ def get_repro_tool(cfg, dataset_name, device = 'cuda'):
     return reproTool
 
 
-def load_reprojection_tools(cfg, cameras_to_use = None, device = 'cuda'):
+def load_reprojection_tools(cfg, cameras_to_use = None, device = None):
+    if device is None:
+        device = get_device()
     if cameras_to_use != None:
         print (f"Using subset of cameras: {cameras_to_use}.")
     dataset_dir = os.path.join(cfg.PARENT_DIR, cfg.DATASET.DATASET_ROOT_DIR,

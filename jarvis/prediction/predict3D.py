@@ -22,9 +22,11 @@ from jarvis.utils.reprojection import ReprojectionTool, load_reprojection_tools
 from jarvis.utils.reprojection import get_repro_tool
 from jarvis.config.project_manager import ProjectManager
 from jarvis.prediction.jarvis3D import JarvisPredictor3D
+from jarvis.utils.device_utils import get_device
 
 
 def predict3D(params):
+    device = get_device()
     #Load project and config
     project = ProjectManager()
     if not project.load(params.project_name):
@@ -75,12 +77,12 @@ def predict3D(params):
         Parallel(n_jobs=12, require='sharedmem')(delayed(read_images)
                     (cap, slice, imgs_orig) for slice, cap in enumerate(caps))
         imgs = torch.from_numpy(
-                imgs_orig).cuda().float().permute(0,3,1,2)[:, [2, 1, 0]]/255.
+                imgs_orig).to(device).float().permute(0,3,1,2)[:, [2, 1, 0]]/255.
 
         points3D_net, confidences = jarvisPredictor(imgs,
-                    reproTool.cameraMatrices.cuda(),
-                    reproTool.intrinsicMatrices.cuda(),
-                    reproTool.distortionCoefficients.cuda())
+                    reproTool.cameraMatrices.to(device),
+                    reproTool.intrinsicMatrices.to(device),
+                    reproTool.distortionCoefficients.to(device))
 
         if points3D_net != None:
             row = []

@@ -17,6 +17,7 @@ from ruamel.yaml import YAML
 
 from jarvis.prediction.jarvis2D import JarvisPredictor2D
 from jarvis.config.project_manager import ProjectManager
+from jarvis.utils.device_utils import get_device
 
 
 def create_info_file(params):
@@ -28,6 +29,7 @@ def create_info_file(params):
 
 
 def predict2D(params):
+    device = get_device()
     project = ProjectManager()
     if not project.load(params.project_name):
         print (f'{CLIColors.FAIL}Could not load project: {project_name}! '
@@ -91,7 +93,7 @@ def predict2D(params):
         for frame_num in tqdm(range(params.number_frames)):
             ret, img_orig = cap.read()
             img = torch.from_numpy(
-                    img_orig).cuda().float().permute(2,0,1)[[2, 1, 0]]/255.
+                    img_orig).to(device).float().permute(2,0,1)[[2, 1, 0]]/255.
 
             points2D, confidences = jarvisPredictor(img.unsqueeze(0))
 

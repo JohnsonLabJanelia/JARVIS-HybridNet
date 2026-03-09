@@ -41,17 +41,16 @@ class HybridNetBackbone(nn.Module):
 
 
         self.softplus = nn.Softplus()
+        grid_range = torch.arange(int(self.grid_size/self.grid_spacing/2))
         self.xx,self.yy,self.zz = torch.meshgrid(
-                torch.arange(int(self.grid_size/self.grid_spacing/2)).cuda(),
-                torch.arange(int(self.grid_size/self.grid_spacing/2)).cuda(),
-                torch.arange(int(self.grid_size/self.grid_spacing/2)).cuda(),
-                indexing = 'ij')
+                grid_range, grid_range, grid_range, indexing = 'ij')
 
-        self.heatmap_size = torch.cuda.IntTensor([0,0])
+        self.heatmap_size = torch.tensor([0,0], dtype=torch.int32)
 
 
     def forward(self, imgs, img_size, centerHM, center3D,cameraMatrices,
                 intrinsicMatrices, distortionCoefficients):
+        device = imgs.device
         batch_size = imgs.shape[0]
         self.heatmap_size = (img_size/2).int()
         heatmaps_batch = self.effTrack(
@@ -73,17 +72,22 @@ class HybridNetBackbone(nn.Module):
         heatmap_final = self.softplus(heatmap_final)
 
         #TODO: Make this work for different batch sizes"!!
+        xx = self.xx.to(device)
+        yy = self.yy.to(device)
+        zz = self.zz.to(device)
+        grid_spacing = self.grid_spacing.to(device)
+        grid_size = self.grid_size.to(device)
         norm = torch.sum(heatmap_final, dim = [2,3,4])
-        x = torch.mul(heatmap_final, self.xx)
+        x = torch.mul(heatmap_final, xx)
         x = torch.sum(x, dim = [2,3,4])/norm
-        y = torch.mul(heatmap_final, self.yy)
+        y = torch.mul(heatmap_final, yy)
         y = torch.sum(y, dim = [2,3,4])/norm
-        z = torch.mul(heatmap_final, self.zz)
+        z = torch.mul(heatmap_final, zz)
         z = torch.sum(z, dim = [2,3,4])/norm
         points3D = torch.stack([x,y,z], dim = 2)
         confidences = torch.clamp(torch.max(heatmap_final.view(
                     *heatmap_final.shape[:2], -1), dim = 2)[0], max = 255.)/255.
-        points3D = (points3D.transpose(0,1)*self.grid_spacing*2 - self.grid_size
+        points3D = (points3D.transpose(0,1)*grid_spacing*2 - grid_size
                     / 2. + center3D).transpose(0,1)
         heatmap_final = self.softplus(heatmap_final)
 

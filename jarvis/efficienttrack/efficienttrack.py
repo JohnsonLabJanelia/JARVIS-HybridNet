@@ -23,6 +23,7 @@ from .loss import HeatmapLoss
 import jarvis.efficienttrack.utils as utils
 from jarvis.utils.logger import NetLogger, AverageMeter
 import jarvis.utils.clp as clp
+from jarvis.utils.device_utils import get_device
 
 import warnings
 #Filter out weird pytorch floordiv deprecation warning, don't know where it's
@@ -44,6 +45,7 @@ class EfficientTrack:
     def __init__(self, mode, cfg, weights = None, run_name = None):
         self.mode = mode
         self.main_cfg = cfg
+        self.device = get_device()
         if mode == 'CenterDetect' or mode == 'CenterDetectInference':
             self.cfg = self.main_cfg.CENTERDETECT
         else:
@@ -67,7 +69,7 @@ class EfficientTrack:
             self.found_weights = self.load_weights(weights)
 
             self.criterion = HeatmapLoss(self.cfg, self.mode)
-            self.model = self.model.cuda()
+            self.model = self.model.to(self.device)
 
             if self.cfg.OPTIMIZER == 'adamw':
                 self.optimizer = torch.optim.AdamW(self.model.parameters(),
@@ -79,9 +81,8 @@ class EfficientTrack:
 
         elif mode == 'KeypointDetectInference' or 'CenterDetectInference':
             self.load_weights(weights)
-            if torch.cuda.is_available():
-                self.model = self.model.cuda()
-            else:
+            self.model = self.model.to(self.device)
+            if str(self.device) == 'cpu':
                 clp.info("No GPU available, model is compiled on CPU.")
             self.model.requires_grad_(False)
             self.model.eval()
@@ -92,11 +93,8 @@ class EfficientTrack:
             weights_path =  self.get_latest_weights()
         if weights_path is not None:
             if os.path.isfile(weights_path):
-                if torch.cuda.is_available():
-                    pretrained_dict = torch.load(weights_path)
-                else:
-                    pretrained_dict = torch.load(weights_path,
-                                map_location=torch.device('cpu'))
+                pretrained_dict = torch.load(weights_path,
+                            map_location=self.device)
                 if (self.mode == "KeypointDetect" and
                             pretrained_dict['final_conv1.weight'].shape[0]
                             != self.cfg.NUM_JOINTS):
@@ -117,11 +115,8 @@ class EfficientTrack:
         weights_path = os.path.join(self.main_cfg.PARENT_DIR, 'pretrained',
                     'EcoSet', f'EfficientTrack-{self.cfg.MODEL_SIZE}.pth')
         if os.path.isfile(weights_path):
-            if torch.cuda.is_available():
-                pretrained_dict = torch.load(weights_path)
-            else:
-                pretrained_dict = torch.load(weights_path,
-                            map_location=torch.device('cpu'))
+            pretrained_dict = torch.load(weights_path,
+                        map_location=self.device)
             pretrained_dict = {k: v for k, v in pretrained_dict.items()
                         if not k in ['final_conv1.weight', 'final_conv2.weight',
                         'first_conv.pointwise_conv.bias',
@@ -143,11 +138,8 @@ class EfficientTrack:
         weights_path = os.path.join(self.main_cfg.PARENT_DIR, 'pretrained',
                     pose, weights_name)
         if os.path.isfile(weights_path):
-            if torch.cuda.is_available():
-                pretrained_dict = torch.load(weights_path)
-            else:
-                pretrained_dict = torch.load(weights_path,
-                            map_location=torch.device('cpu'))
+            pretrained_dict = torch.load(weights_path,
+                        map_location=self.device)
             if (self.mode == "KeypointDetect"
                         and pretrained_dict['final_conv1.weight'].shape[0]
                         != self.cfg.NUM_JOINTS):
@@ -255,9 +247,9 @@ class EfficientTrack:
                 imgs = data[0].permute(0, 3, 1, 2).float()
                 heatmaps = data[1]
 
-                imgs = imgs.cuda()
-                heatmaps = list(map(lambda x: x.cuda(non_blocking=True),
-                            heatmaps))
+                imgs = imgs.to(self.device)
+                heatmaps = list(map(lambda x: x.to(self.device,
+                            non_blocking=True), heatmaps))
                 keypoints = np.array(data[2]).reshape(-1,
                             self.cfg.NUM_JOINTS,3)[:,:,:2]
 
@@ -319,9 +311,9 @@ class EfficientTrack:
                         heatmaps = data[1]
                         keypoints = np.array(data[2]).reshape(-1,
                                     self.cfg.NUM_JOINTS,3)[:,:,:2]
-                        imgs = imgs.cuda()
-                        heatmaps = list(map(lambda x: x.cuda(non_blocking=True),
-                                    heatmaps))
+                        imgs = imgs.to(self.device)
+                        heatmaps = list(map(lambda x: x.to(self.device,
+                                    non_blocking=True), heatmaps))
 
                         outputs = self.model(imgs)
                         heatmaps_losses = self.criterion(outputs,

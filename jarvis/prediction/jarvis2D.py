@@ -12,6 +12,7 @@ import torch.nn as nn
 from torchvision import transforms
 
 from jarvis.efficienttrack.efficienttrack import EfficientTrack
+from jarvis.utils.device_utils import get_device
 
 
 class JarvisPredictor2D(nn.Module):
@@ -19,6 +20,7 @@ class JarvisPredictor2D(nn.Module):
                 weights_keypoint_detect = 'latest', trt_mode = 'off'):
         super(JarvisPredictor2D, self).__init__()
         self.cfg = cfg
+        self.device = get_device()
 
         self.centerDetect = EfficientTrack('CenterDetectInference', self.cfg,
                     weights_center_detect).model
@@ -26,15 +28,17 @@ class JarvisPredictor2D(nn.Module):
                     self.cfg, weights_keypoint_detect).model
 
         self.transform_mean = torch.tensor(self.cfg.DATASET.MEAN,
-                    device = torch.device('cuda')).view(3,1,1)
+                    device = self.device).view(3,1,1)
         self.transform_std = torch.tensor(self.cfg.DATASET.STD,
-                    device = torch.device('cuda')).view(3,1,1)
+                    device = self.device).view(3,1,1)
         self.bbox_hw = int(self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE/2)
         self.bounding_box_size = self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE
 
         self.center_detect_img_size = int(self.cfg.CENTERDETECT.IMAGE_SIZE)
 
-        if trt_mode == 'new':
+        if trt_mode != 'off' and not torch.cuda.is_available():
+            print("Warning: TensorRT requires CUDA. Ignoring trt_mode on this device.")
+        elif trt_mode == 'new':
             print("here")
             self.compile_trt_models()
             print("after_complie")
@@ -73,11 +77,11 @@ class JarvisPredictor2D(nn.Module):
                     self.cfg.PROJECT_NAME, 'trt-models', 'predict2D')
         os.makedirs(trt_path, exist_ok = True)
 
-        self.centerDetect = self.centerDetect.eval().cuda()
+        self.centerDetect = self.centerDetect.eval().to(self.device)
         print("before jit trace?")
 
         traced_model = torch.jit.trace(self.centerDetect,
-                    [torch.randn((1, 3, 256, 256)).to("cuda")])
+                    [torch.randn((1, 3, 256, 256)).to(self.device)])
         print("after jit trace?")
 
         print("before compile?")
@@ -95,10 +99,10 @@ class JarvisPredictor2D(nn.Module):
                     os.path.join(trt_path, 'centerDetect.pt'))
 
         print("after jit save?")
-        self.keypointDetect.eval().cuda()
+        self.keypointDetect.eval().to(self.device)
         traced_model = torch.jit.trace(self.keypointDetect,
                     [torch.randn((1, 3, self.bounding_box_size,
-                    self.bounding_box_size)).to("cuda")])
+                    self.bounding_box_size)).to(self.device)])
         self.keypointDetect = torch_tensorrt.compile(traced_model,
             inputs= [torch_tensorrt.Input((1, 3, self.bounding_box_size,
                         self.bounding_box_size),
@@ -112,12 +116,12 @@ class JarvisPredictor2D(nn.Module):
 
     def forward(self, img):
         img_size = torch.tensor([img.shape[3], img.shape[2]],
-                    device = torch.device('cuda'))
+                    device = self.device)
 
         downsampling_scale = torch.tensor([
                     img_size[0] / float(self.center_detect_img_size),
                     img_size[1] / float(self.center_detect_img_size)],
-                    device = torch.device('cuda')).float()
+                    device = self.device).float()
 
         img_resized = transforms.functional.resize(img,
                     [self.center_detect_img_size,self.center_detect_img_size])
