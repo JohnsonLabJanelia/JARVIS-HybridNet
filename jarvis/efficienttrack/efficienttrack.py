@@ -389,6 +389,195 @@ class EfficientTrack:
         return np.nanmean(masked)
 
 
+    def train_tr(self, labeled_set, unlabeled_set, validation_set,
+                 num_epochs, proj_matrices, tr_weight=1.0,
+                 tr_ramp_fraction=0.3, start_epoch=0):
+        """JARVIS-TR: Semi-supervised training with Triangulation Residual Loss.
+
+        Labeled frames get supervised heatmap loss + TR loss.
+        Unlabeled frames get TR loss only (geometric consistency).
+
+        Args:
+            labeled_set: Dataset2D with labeled frames
+            unlabeled_set: Dataset2DMultiview with unlabeled multi-view frames
+            validation_set: Dataset2D for validation
+            num_epochs: Number of training epochs
+            proj_matrices: (N_cams, 3, 4) camera projection matrices
+            tr_weight: Maximum TR loss weight
+            tr_ramp_fraction: Fraction of epochs for loss weight ramp-up
+        """
+        from jarvis.efficienttrack.loss_triangulation import (
+            TriangulationResidualLoss, tr_loss_weight)
+        from torch.utils.data import DataLoader
+
+        pin = torch.cuda.is_available()
+
+        labeled_loader = DataLoader(
+            labeled_set, batch_size=self.cfg.BATCH_SIZE,
+            shuffle=True, num_workers=self.main_cfg.DATALOADER_NUM_WORKERS,
+            pin_memory=pin, drop_last=True)
+
+        unlabeled_loader = DataLoader(
+            unlabeled_set, batch_size=1,  # one multi-view frame at a time
+            shuffle=True, num_workers=0,
+            pin_memory=False, drop_last=False) if unlabeled_set else None
+
+        val_loader = DataLoader(
+            validation_set, batch_size=self.cfg.BATCH_SIZE,
+            shuffle=False, num_workers=self.main_cfg.DATALOADER_NUM_WORKERS,
+            pin_memory=pin, drop_last=True)
+
+        tr_criterion = TriangulationResidualLoss(temperature=1.0).to(self.device)
+        proj_mat = proj_matrices.to(self.device)
+
+        # Heatmap-to-image scale: heatmap is half the crop size
+        hm_scale = self.cfg.BOUNDING_BOX_SIZE / (self.cfg.BOUNDING_BOX_SIZE / 2.0)
+
+        if self.cfg.USE_ONECYLCLE:
+            self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                self.optimizer, self.cfg.MAX_LEARNING_RATE,
+                steps_per_epoch=len(labeled_loader),
+                epochs=num_epochs, div_factor=100)
+
+        self.model.train()
+        best_val_acc = float('inf')
+
+        import jarvis.utils.clp as clp
+        clp.info(f'JARVIS-TR: Training {self.mode} for {num_epochs} epochs '
+                 f'({len(labeled_set)} labeled + '
+                 f'{len(unlabeled_set) if unlabeled_set else 0} unlabeled frames)')
+
+        for epoch in range(num_epochs):
+            # TR loss weight ramp-up
+            lambda_tr = tr_loss_weight(epoch, num_epochs, tr_weight,
+                                       tr_ramp_fraction)
+
+            # === Supervised training on labeled data ===
+            progress_bar = tqdm(labeled_loader)
+            for count, data in enumerate(progress_bar):
+                imgs = data[0].permute(0, 3, 1, 2).float()
+                heatmaps = data[1]
+                keypoints = np.array(data[2]).reshape(-1,
+                            self.cfg.NUM_JOINTS, 3)[:, :, :2]
+
+                imgs = imgs.to(self.device)
+                heatmaps = list(map(lambda x: x.to(self.device), heatmaps))
+
+                self.optimizer.zero_grad()
+                outputs = self.model(imgs)
+
+                # Supervised heatmap loss
+                heatmaps_losses = self.criterion(outputs, heatmaps)
+                sup_loss = 0
+                for idx in range(2):
+                    if heatmaps_losses[idx] is not None:
+                        sup_loss = sup_loss + heatmaps_losses[idx].mean(dim=0)
+
+                loss = sup_loss
+                loss.backward()
+                self.optimizer.step()
+                if self.cfg.USE_ONECYLCLE:
+                    self.scheduler.step()
+
+                outs = outputs[1].clamp(0, 255).detach()
+                acc = self.calculate_accuracy(outs, keypoints)
+                self.lossMeter.update(sup_loss.item())
+                if acc != -1:
+                    self.accuracyMeter.update(acc)
+
+                progress_bar.set_description(
+                    f'Epoch {epoch+1}/{num_epochs} [sup] '
+                    f'Loss: {self.lossMeter.read():.4f} '
+                    f'Acc: {self.accuracyMeter.read():.2f}')
+
+            # === TR loss on unlabeled multi-view data ===
+            tr_loss_total = 0.0
+            tr_count = 0
+            if unlabeled_loader is not None and lambda_tr > 0:
+                self.model.train()
+                for udata in unlabeled_loader:
+                    mv_imgs = udata[0].float()  # (1, N_cams, crop, crop, 3)
+                    # Reshape: (N_cams, 3, crop, crop)
+                    mv_imgs = mv_imgs.squeeze(0).permute(0, 3, 1, 2).to(self.device)
+
+                    self.optimizer.zero_grad()
+                    # Run 2D detector on each camera view
+                    outputs_mv = self.model(mv_imgs)  # (N_cams, N_joints, H, W)
+                    heatmaps_mv = outputs_mv[1]  # higher-res output
+
+                    # Reshape for TR loss: (1, N_cams, N_joints, H, W)
+                    hm = heatmaps_mv.unsqueeze(0)
+
+                    tr_loss = tr_criterion(hm, proj_mat, hm_scale)
+                    weighted_tr = lambda_tr * tr_loss
+
+                    weighted_tr.backward()
+                    self.optimizer.step()
+
+                    tr_loss_total += tr_loss.item()
+                    tr_count += 1
+
+            avg_tr = tr_loss_total / max(tr_count, 1)
+
+            # Log
+            self.logger.update_learning_rate(
+                self.optimizer.param_groups[0]['lr'])
+            self.logger.update_train_loss(self.lossMeter.read())
+            self.logger.update_train_accuracy(self.accuracyMeter.read())
+            self.lossMeter.reset()
+            self.accuracyMeter.reset()
+
+            # Checkpoint
+            if (epoch + 1) % self.cfg.CHECKPOINT_SAVE_INTERVAL == 0:
+                if epoch + 1 < num_epochs:
+                    self.save_checkpoint(
+                        f'EfficientTrack-{self.cfg.MODEL_SIZE}_Epoch_{epoch+1}.pth')
+            if epoch + 1 == num_epochs:
+                self.save_checkpoint(
+                    f'EfficientTrack-{self.cfg.MODEL_SIZE}_final.pth')
+
+            # Validation
+            if (epoch + 1) % self.cfg.VAL_INTERVAL == 0:
+                self.model.eval()
+                for data in val_loader:
+                    with torch.no_grad():
+                        imgs = data[0].permute(0, 3, 1, 2).float()
+                        heatmaps = data[1]
+                        keypoints = np.array(data[2]).reshape(-1,
+                                    self.cfg.NUM_JOINTS, 3)[:, :, :2]
+                        imgs = imgs.to(self.device)
+                        heatmaps = list(map(lambda x: x.to(self.device), heatmaps))
+                        outputs = self.model(imgs)
+                        heatmaps_losses = self.criterion(outputs, heatmaps)
+                        loss = 0
+                        for idx in range(2):
+                            if heatmaps_losses[idx] is not None:
+                                loss = loss + heatmaps_losses[idx].mean(dim=0)
+                    outs = outputs[1].clamp(0, 255).detach()
+                    acc = self.calculate_accuracy(outs, keypoints)
+                    self.lossMeter.update(loss.item())
+                    if acc != -1:
+                        self.accuracyMeter.update(acc)
+
+                val_acc = self.accuracyMeter.read()
+                print(f'Val. Epoch {epoch+1}/{num_epochs}. '
+                      f'Loss: {self.lossMeter.read():.5f}. '
+                      f'Acc: {val_acc:.3f} px. '
+                      f'TR: {avg_tr:.4f} (λ={lambda_tr:.3f})')
+
+                # Save best model
+                if val_acc < best_val_acc and not np.isnan(val_acc):
+                    best_val_acc = val_acc
+                    self.save_checkpoint(
+                        f'EfficientTrack-{self.cfg.MODEL_SIZE}_best.pth')
+
+                self.lossMeter.reset()
+                self.accuracyMeter.reset()
+                self.model.train()
+
+        clp.success(f'JARVIS-TR training complete! '
+                    f'Best val accuracy: {best_val_acc:.3f} px')
+
     def save_checkpoint(self, name):
         torch.save(self.model.state_dict(),
                    os.path.join(self.model_savepath, name))

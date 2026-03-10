@@ -122,6 +122,93 @@ def train_efficienttrack(mode, project_name, num_epochs, weights,
     return True
 
 
+def train_efficienttrack_tr(mode, project_name, num_epochs, weights,
+            recording_path, tr_weight=1.0, **kwargs):
+    """JARVIS-TR: Train EfficientTrack with Triangulation Residual Loss.
+
+    Same as train_efficienttrack but adds semi-supervised TR loss on
+    unlabeled multi-view frames sampled from video.
+
+    Args:
+        mode: 'CenterDetect' or 'KeypointDetect'
+        project_name: JARVIS project name
+        num_epochs: Training epochs
+        weights: Weight initialization ('None', 'latest', 'ecoset', or path)
+        recording_path: Path to folder with .mp4 video files
+        tr_weight: Maximum TR loss weight
+    """
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+
+    project = ProjectManager()
+    if not project.load(project_name):
+        return False
+
+    if num_epochs is None:
+        if mode == 'CenterDetect':
+            num_epochs = project.cfg.CENTERDETECT.NUM_EPOCHS
+        else:
+            num_epochs = project.cfg.KEYPOINTDETECT.NUM_EPOCHS
+
+    clp.info(f'JARVIS-TR: Training {mode} on project {project_name} '
+             f'for {num_epochs} epochs with TR loss (weight={tr_weight})')
+
+    # Labeled datasets (same as standard)
+    training_set = Dataset2D(project.cfg, set='train', mode=mode)
+    val_set = Dataset2D(project.cfg, set='val', mode=mode)
+
+    # Unlabeled multi-view dataset from video
+    from jarvis.dataset.dataset2D_multiview import Dataset2DMultiview
+    dataset_name = list(project.cfg.DATASET.DATASET_3D.split('/'))[0] \
+        if '/' in str(project.cfg.DATASET.DATASET_3D) \
+        else str(project.cfg.DATASET.DATASET_3D)
+
+    # Get the calibration dataset name from the training annotations
+    import json
+    annot_path = os.path.join(project.cfg.PARENT_DIR,
+                              project.cfg.DATASET.DATASET_ROOT_DIR,
+                              project.cfg.DATASET.DATASET_3D or project.cfg.DATASET.DATASET_2D,
+                              'annotations', 'instances_train.json')
+    with open(annot_path) as f:
+        annot = json.load(f)
+    calib_name = list(annot['calibrations'].keys())[0]
+
+    unlabeled_set = Dataset2DMultiview(
+        project.cfg, recording_path, calib_name,
+        num_frames=200,
+        crop_size=project.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE)
+
+    # Get projection matrices from unlabeled dataset
+    proj_matrices = unlabeled_set.proj_matrices
+
+    # Create model
+    efficientTrack = EfficientTrack(mode, project.cfg, **kwargs)
+
+    # Load weights (same logic as standard)
+    pose_pretrain_list = get_available_pretrains(project.cfg.PARENT_DIR)
+    if weights == 'latest':
+        latest = get_latest_weights_efficienttrack(project.cfg, mode)
+        if latest:
+            efficientTrack.load_weights(latest)
+    elif weights == 'None' or weights is None:
+        pass
+    elif weights == 'ecoset' or weights == 'EcoSet':
+        efficientTrack.load_ecoset_pretrain()
+    elif weights in pose_pretrain_list:
+        efficientTrack.load_pose_pretrain(weights)
+    else:
+        efficientTrack.load_weights(weights)
+
+    # Train with TR loss
+    efficientTrack.train_tr(
+        training_set, unlabeled_set, val_set,
+        num_epochs, proj_matrices, tr_weight=tr_weight)
+
+    clp.success('JARVIS-TR training finished!')
+    del efficientTrack
+    return True
+
+
 def train_hybridnet(project_name, num_epochs, weights_keypoint_detect, weights,
             mode, finetune = False, streamlitWidgets = None, **kwargs):
     camera_list = None
