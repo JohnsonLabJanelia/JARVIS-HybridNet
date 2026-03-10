@@ -148,19 +148,20 @@ class HybridNet:
         :param start_epoch: Initial epoch for the training, set this if
                             training is continued from an earlier session
         """
+        pin = torch.cuda.is_available()  # pin_memory only benefits CUDA
         training_generator = DataLoader(
                     training_set,
                     batch_size = self.cfg.HYBRIDNET.BATCH_SIZE,
                     shuffle = True,
                     num_workers =  self.cfg.DATALOADER_NUM_WORKERS,
-                    pin_memory = True)
+                    pin_memory = pin)
 
         val_generator = DataLoader(
                     validation_set,
                     batch_size = self.cfg.HYBRIDNET.BATCH_SIZE,
                     shuffle = False,
                     num_workers =  self.cfg.DATALOADER_NUM_WORKERS,
-                    pin_memory = True)
+                    pin_memory = pin)
         epoch = start_epoch
         self.model.train()
 
