@@ -199,15 +199,15 @@ class HybridNet:
                 intrinsicMatrices = data[6]
                 distortionCoefficients = data[7]
 
-                imgs = imgs.to(self.device)
-                keypoints = keypoints.to(self.device)
-                centerHM = centerHM.to(self.device)
-                center3D = center3D.to(self.device)
-                heatmap3D = heatmap3D.to(self.device)
-                cameraMatrices = cameraMatrices.to(self.device)
-                intrinsicMatrices = intrinsicMatrices.to(self.device)
-                distortionCoefficients = distortionCoefficients.to(self.device)
-                img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).to(self.device)
+                imgs = imgs.float().to(self.device)
+                keypoints = keypoints.float().to(self.device)
+                centerHM = centerHM.float().to(self.device)
+                center3D = center3D.float().to(self.device)
+                heatmap3D = heatmap3D.float().to(self.device)
+                cameraMatrices = cameraMatrices.float().to(self.device)
+                intrinsicMatrices = intrinsicMatrices.float().to(self.device)
+                distortionCoefficients = distortionCoefficients.float().to(self.device)
+                img_size = torch.tensor(self.cfg.DATASET.IMAGE_SIZE).float().to(self.device)
 
 
                 self.optimizer.zero_grad()
@@ -287,16 +287,16 @@ class HybridNet:
                         intrinsicMatrices = data[6]
                         distortionCoefficients = data[7]
 
-                        imgs = imgs.to(self.device)
-                        keypoints = keypoints.to(self.device)
-                        centerHM = centerHM.to(self.device)
-                        center3D = center3D.to(self.device)
-                        heatmap3D = heatmap3D.to(self.device)
-                        cameraMatrices = cameraMatrices.to(self.device)
-                        intrinsicMatrices = intrinsicMatrices.to(self.device)
-                        distortionCoefficients = distortionCoefficients.to(self.device)
+                        imgs = imgs.float().to(self.device)
+                        keypoints = keypoints.float().to(self.device)
+                        centerHM = centerHM.float().to(self.device)
+                        center3D = center3D.float().to(self.device)
+                        heatmap3D = heatmap3D.float().to(self.device)
+                        cameraMatrices = cameraMatrices.float().to(self.device)
+                        intrinsicMatrices = intrinsicMatrices.float().to(self.device)
+                        distortionCoefficients = distortionCoefficients.float().to(self.device)
                         img_size = torch.tensor(
-                                    self.cfg.DATASET.IMAGE_SIZE).to(self.device)
+                                    self.cfg.DATASET.IMAGE_SIZE).float().to(self.device)
 
                         outputs = self.model(imgs,
                                              img_size,
