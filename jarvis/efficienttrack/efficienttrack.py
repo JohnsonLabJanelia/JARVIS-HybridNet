@@ -303,6 +303,17 @@ class EfficientTrack:
             if epoch + 1 == num_epochs:
                 self.save_checkpoint(f'EfficientTrack-'
                             f'{self.cfg.MODEL_SIZE}_final.pth')
+                # Auto-export ONNX for RED inference
+                try:
+                    from jarvis.utils.onnx_export import export_to_onnx
+                    input_size = (self.cfg.IMAGE_SIZE if self.mode == 'CenterDetect'
+                                  else self.cfg.BOUNDING_BOX_SIZE)
+                    onnx_path = os.path.join(self.model_savepath,
+                        f'EfficientTrack-{self.cfg.MODEL_SIZE}_final.onnx')
+                    export_to_onnx(self.model, input_size, onnx_path,
+                                   num_joints=self.cfg.NUM_JOINTS)
+                except Exception as e:
+                    print(f'[ONNX export] Warning: {e}')
 
             if (epoch + 1) % self.cfg.VAL_INTERVAL == 0:
                 self.model.eval()
@@ -535,6 +546,17 @@ class EfficientTrack:
             if epoch + 1 == num_epochs:
                 self.save_checkpoint(
                     f'EfficientTrack-{self.cfg.MODEL_SIZE}_final.pth')
+                # Auto-export ONNX for RED inference
+                try:
+                    from jarvis.utils.onnx_export import export_to_onnx
+                    input_size = (self.cfg.IMAGE_SIZE if self.mode == 'CenterDetect'
+                                  else self.cfg.BOUNDING_BOX_SIZE)
+                    onnx_path = os.path.join(self.model_savepath,
+                        f'EfficientTrack-{self.cfg.MODEL_SIZE}_final.onnx')
+                    export_to_onnx(self.model, input_size, onnx_path,
+                                   num_joints=self.cfg.NUM_JOINTS)
+                except Exception as e:
+                    print(f'[ONNX export] Warning: {e}')
 
             # Validation
             if (epoch + 1) % self.cfg.VAL_INTERVAL == 0:
