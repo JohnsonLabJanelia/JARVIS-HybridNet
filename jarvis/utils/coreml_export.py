@@ -37,25 +37,47 @@ def _find_latest_weights(models_dir):
     return pths[-1] if pths else None
 
 
+class NormalizedModel(nn.Module):
+    """Wraps a model with ImageNet normalization.
+
+    Input: [0, 1] RGB tensor (after CoreML's scale=1/255).
+    Output: ImageNet-normalized tensor fed to the backbone.
+    """
+    def __init__(self, backbone):
+        super().__init__()
+        self.backbone = backbone
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def forward(self, x):
+        return self.backbone((x - self.mean) / self.std)
+
+
 def convert_to_mlpackage(model, input_size, output_path, model_name='model'):
     """Convert a traced PyTorch model to CoreML .mlpackage.
 
-    The model input is configured as ImageType (BGR, scale=1/255) so that
-    CoreML handles BGRA→BGR conversion and normalization on GPU/ANE.
+    The model is wrapped with ImageNet normalization so CoreML only needs to
+    do BGRA→RGB conversion and scale to [0,1]. The normalization runs inside
+    the model on GPU/ANE.
     """
     import coremltools as ct
 
+    # Wrap model with ImageNet normalization
+    wrapped = NormalizedModel(model)
+    wrapped.eval()
+
     dummy = torch.randn(1, 3, input_size, input_size)
     with torch.no_grad():
-        traced = torch.jit.trace(model, dummy)
+        traced = torch.jit.trace(wrapped, dummy)
 
     t0 = time.time()
 
-    # ImageType input: CoreML handles BGRA→BGR + scale on device
+    # ImageType input: CoreML handles BGRA→RGB + scale to [0,1]
+    # ImageNet normalization is baked into the model via NormalizedModel
     inp = ct.ImageType(
         name='image',
         shape=(1, 3, input_size, input_size),
-        color_layout=ct.colorlayout.BGR,
+        color_layout=ct.colorlayout.RGB,
         scale=1.0 / 255.0,
         bias=[0, 0, 0],
     )
@@ -169,8 +191,9 @@ def export_project(project_path, output_dir=None):
         'coreml_info': {
             'format': 'mlprogram',
             'precision': 'float16',
-            'input_color_layout': 'BGR',
+            'input_color_layout': 'RGB',
             'input_scale': 1.0 / 255.0,
+            'imagenet_normalization': 'baked into model',
         },
     })
     with open(meta_path, 'w') as f:
