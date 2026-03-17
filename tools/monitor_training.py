@@ -88,7 +88,7 @@ def bpeek_tail(job_id, ssh_host, n_lines=60):
 # ── Plotting ─────────────────────────────────────────────────────────────────
 COLORS = plt.rcParams['axes.prop_cycle'].by_key()['color']
 
-def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, show=True):
+def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, show=True, fig=None):
     """Render dashboard figure; optionally save PNG and/or display."""
     ts = datetime.now().strftime('%H:%M:%S')
 
@@ -102,7 +102,11 @@ def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, sh
     has_log = bool(job_lines)
     n_rows = max(1, n_plots) + (2 if has_log else 0)
 
-    fig = plt.figure(figsize=(14, 4 * n_rows), facecolor='#1a1a2e')
+    if fig is None:
+        fig = plt.figure(figsize=(14, 4 * n_rows), facecolor='#1a1a2e')
+    else:
+        fig.clear()
+        fig.set_facecolor('#1a1a2e')
     fig.suptitle(
         f"Training Dashboard  ·  {Path(logdir).name}  ·  {ts}",
         color='white', fontsize=13, y=0.98,
@@ -173,9 +177,11 @@ def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, sh
         print(f"[{ts}] Saved → {outpath}")
 
     if show:
+        fig.canvas.draw_idle()
         plt.pause(0.1)
     else:
         plt.close(fig)
+        fig = None
 
     return fig
 
@@ -229,6 +235,7 @@ def main():
     print(f"Refresh every {args.interval}s  |  Ctrl-C to stop")
 
     try:
+        fig = None
         while True:
             scalars = read_tf_events(logdir)
 
@@ -236,11 +243,12 @@ def main():
             if args.jobid:
                 job_lines = bpeek_tail(args.jobid, args.ssh_host)
 
-            make_dashboard(scalars, logdir,
-                           job_lines=job_lines,
-                           outdir=args.outdir,
-                           save=True,
-                           show=show)
+            fig = make_dashboard(scalars, logdir,
+                                 job_lines=job_lines,
+                                 outdir=args.outdir,
+                                 save=True,
+                                 show=show,
+                                 fig=fig)
 
             total_steps = sum(pts[-1][0] for pts in scalars.values() if pts) if scalars else 0
             print(f"  tags={list(scalars.keys())}  latest_step={total_steps}")
