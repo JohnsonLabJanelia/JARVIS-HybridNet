@@ -3,66 +3,63 @@
 Live training dashboard for JARVIS HybridNet (and other nets).
 
 Usage:
-    # Auto-detect latest run:
     python tools/monitor_training.py --project mouseJan30 --net HybridNet
-
-    # Point at a specific run directory:
-    python tools/monitor_training.py --logdir projects/mouseJan30/logs/HybridNet/Run_20260316-222315
-
-    # Monitor cluster logs (path auto-resolves via mount):
     python tools/monitor_training.py \\
-        --logdir /mnt/johnson_lab/doq/JARVIS-HybridNet/projects/mouseJan30/logs/HybridNet/Run_20260316-222315
-
-    # Also tail a LSF job output:
-    python tools/monitor_training.py --project mouseJan30 --net HybridNet --jobid 148808346
+        --logdir /mnt/johnson_lab/doq/JARVIS-HybridNet/projects/mouseJan30/logs/HybridNet/Run_20260316-222315 \\
+        --jobid 148808346 --interval 300 --no-show --outdir /tmp
 
 Options:
     --project       JARVIS project name (e.g. mouseJan30)
     --net           Network: HybridNet | CenterDetect | KeypointDetect
     --logdir        Explicit path to the TF events directory
-    --jobdir        Base JARVIS project root (default: auto-detect)
     --jobid         LSF job ID to tail via bpeek over SSH
     --ssh-host      SSH host for bpeek (default: doq@login1)
     --interval      Refresh interval in seconds (default: 30)
-    --no-show       Don't open interactive window; save PNG only
+    --no-show       Save PNG only, no interactive window
     --outdir        Directory to save dashboard PNGs (default: /tmp)
 """
 
-import argparse
-import os
-import sys
-import time
-import subprocess
+import argparse, os, sys, time, subprocess
 from pathlib import Path
 from datetime import datetime
 
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 
-# ── TensorBoard event reader ─────────────────────────────────────────────────
+# ── Palette ───────────────────────────────────────────────────────────────────
+BG     = '#0e1117'
+PANEL  = '#161b27'
+PANEL2 = '#0b0d16'
+BORDER = '#252a3a'
+TEXT   = '#dde1f0'
+DIM    = '#6b7294'
+BLUE   = '#4d8ef5'
+ORANGE = '#f59b4d'
+GREEN  = '#4dcf8e'
+PURPLE = '#9b7cf5'
+RED    = '#f54d6b'
+YELLOW = '#f5d34d'
+SERIES = [BLUE, ORANGE, GREEN, PURPLE, RED, YELLOW]
+GRID   = '#181d2c'
+
+
+# ── TF reader ─────────────────────────────────────────────────────────────────
 def read_tf_events(logdir):
-    """Return dict of tag -> list of (step, value) sorted by step."""
     try:
         from tensorboard.backend.event_processing.event_accumulator import (
-            EventAccumulator, TENSORS, SCALARS,
-        )
+            EventAccumulator, SCALARS)
     except ImportError:
-        print("tensorboard not found — pip install tensorboard")
-        return {}
-
+        sys.exit("pip install tensorboard")
     ea = EventAccumulator(str(logdir), size_guidance={SCALARS: 0})
     ea.Reload()
-    data = {}
-    for tag in ea.Tags().get('scalars', []):
-        events = ea.Scalars(tag)
-        data[tag] = [(e.step, e.value) for e in events]
-    return data
+    return {tag: [(e.step, e.value) for e in ea.Scalars(tag)]
+            for tag in ea.Tags().get('scalars', [])}
 
 
 def find_latest_logdir(project_root, net):
-    """Return path to the most-recently-modified run directory."""
     base = Path(project_root) / 'logs' / net
     if not base.exists():
         return None
@@ -70,111 +67,190 @@ def find_latest_logdir(project_root, net):
     return runs[-1] if runs else None
 
 
-def bpeek_tail(job_id, ssh_host, n_lines=60):
-    """Fetch last n_lines from a running LSF job via bpeek over SSH."""
+def bpeek_tail(job_id, ssh_host, n=40):
     try:
-        result = subprocess.run(
-            ['ssh', '-o', 'ConnectTimeout=8', ssh_host, f'bpeek {job_id}'],
-            capture_output=True, text=True, timeout=15,
-        )
-        lines = (result.stdout + result.stderr).splitlines()
-        # Strip tqdm progress bar noise (lines with \r overwriting)
-        lines = [l for l in lines if '\r' not in l]
-        return lines[-n_lines:]
+        r = subprocess.run(['ssh', '-o', 'ConnectTimeout=8', ssh_host,
+                            f'bpeek {job_id}'],
+                           capture_output=True, text=True, timeout=15)
+        lines = [l for l in (r.stdout + r.stderr).splitlines()
+                 if '\r' not in l and l.strip()]
+        return lines[-n:]
     except Exception as e:
-        return [f"[bpeek error: {e}]"]
+        return [f'[bpeek error: {e}]']
 
 
-# ── Plotting ─────────────────────────────────────────────────────────────────
-COLORS = plt.rcParams['axes.prop_cycle'].by_key()['color']
+def latest(scalars, tags):
+    for t in tags:
+        pts = scalars.get(t, [])
+        if pts:
+            return pts[-1]
+    return None
 
-def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, show=True, fig=None):
-    """Render dashboard figure; optionally save PNG and/or display."""
-    ts = datetime.now().strftime('%H:%M:%S')
 
-    # Group tags
-    loss_tags   = sorted([t for t in scalars if 'loss' in t.lower()])
-    acc_tags    = sorted([t for t in scalars if 'acc' in t.lower()])
-    lr_tags     = sorted([t for t in scalars if 'lr' in t.lower() or 'learning' in t.lower()])
-    other_tags  = sorted([t for t in scalars if t not in loss_tags + acc_tags + lr_tags])
+# ── Axis styling ──────────────────────────────────────────────────────────────
+def style_ax(ax, title, ylabel='', log_scale=False):
+    ax.set_facecolor(PANEL)
+    for sp in ax.spines.values():
+        sp.set_edgecolor(BORDER)
+    ax.tick_params(colors=DIM, labelsize=8, length=2)
+    ax.set_title(title, color=TEXT, fontsize=10, fontweight='bold', pad=8)
+    ax.set_xlabel('Epoch', color=DIM, fontsize=8)
+    if ylabel:
+        ax.set_ylabel(ylabel, color=DIM, fontsize=8)
+    ax.grid(True, color=GRID, linewidth=0.8)
+    ax.set_axisbelow(True)
+    if log_scale:
+        ax.set_yscale('log')
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
-    n_plots = bool(loss_tags) + bool(acc_tags) + bool(lr_tags) + bool(other_tags)
-    has_log = bool(job_lines)
-    n_rows = max(1, n_plots) + (2 if has_log else 0)
+
+def plot_series(ax, scalars, tags):
+    plotted = False
+    for i, tag in enumerate(tags):
+        pts = scalars.get(tag, [])
+        if not pts:
+            continue
+        steps, vals = zip(*pts)
+        c = SERIES[i % len(SERIES)]
+        label = (tag.replace('Train ', '').replace('Validation ', 'Val ')
+                    .replace(' Loss', '').strip())
+        dashed = 'val' in tag.lower()
+        ax.plot(steps, vals, color=c, lw=2.2,
+                linestyle='--' if dashed else '-',
+                marker='o' if len(steps) <= 15 else None,
+                ms=5, markerfacecolor=BG, markeredgewidth=1.5,
+                label=label, zorder=3, solid_capstyle='round')
+        if not dashed:
+            ax.fill_between(steps, vals, alpha=0.08, color=c, zorder=2)
+        plotted = True
+    if plotted:
+        ax.legend(fontsize=8, facecolor=PANEL2, labelcolor=TEXT,
+                  framealpha=0.95, edgecolor=BORDER, loc='best')
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+def make_dashboard(scalars, logdir, job_lines=None,
+                   outdir='/tmp', save=True, show=True, fig=None):
+    ts  = datetime.now().strftime('%H:%M:%S')
+    run = Path(logdir).name
+
+    loss_tags = sorted(t for t in scalars if 'loss' in t.lower())
+    acc_tags  = sorted(t for t in scalars if 'acc'  in t.lower())
+    lr_tags   = sorted(t for t in scalars if 'lr' in t.lower() or 'learning' in t.lower())
+    has_data  = bool(scalars)
+    has_log   = bool(job_lines)
+
+    # Row heights (inches): cards | plots | [log]
+    row_h = [1.4, 3.8] + ([2.2] if has_log else [])
+    fig_h = sum(row_h) + 0.9   # +0.9 for top header
+    fig_w = 15
 
     if fig is None:
-        fig = plt.figure(figsize=(14, 4 * n_rows), facecolor='#1a1a2e')
+        fig = plt.figure(figsize=(fig_w, fig_h), facecolor=BG)
     else:
         fig.clear()
-        fig.set_facecolor('#1a1a2e')
-    fig.suptitle(
-        f"Training Dashboard  ·  {Path(logdir).name}  ·  {ts}",
-        color='white', fontsize=13, y=0.98,
+        fig.set_facecolor(BG)
+        fig.set_size_inches(fig_w, fig_h)
+
+    # Header
+    fig.text(0.5, 1 - 0.12/fig_h, 'JARVIS  Training  Monitor',
+             ha='center', va='top', color=TEXT,
+             fontsize=16, fontweight='bold', fontfamily='monospace',
+             transform=fig.transFigure)
+    fig.text(0.5, 1 - 0.52/fig_h, f'{run}    {ts}',
+             ha='center', va='top', color=DIM, fontsize=9,
+             transform=fig.transFigure)
+
+    # GridSpec — row 0 = cards, row 1 = plots, row 2 = log (optional)
+    n_rows = 2 + int(has_log)
+    gs = gridspec.GridSpec(
+        n_rows, 1, figure=fig,
+        height_ratios=row_h,
+        top=1 - 0.82/fig_h,
+        bottom=0.03,
+        left=0.05, right=0.97,
+        hspace=0.35,
     )
 
-    gs = gridspec.GridSpec(n_rows, 2, figure=fig, hspace=0.45, wspace=0.35)
-    ax_idx = 0
-    style = dict(facecolor='#16213e')
+    # ── Stat cards row ────────────────────────────────────────────────────────
+    train_loss_pt = latest(scalars, [t for t in loss_tags if 'train' in t.lower()])
+    val_loss_pt   = latest(scalars, [t for t in loss_tags if 'val'   in t.lower()])
+    train_acc_pt  = latest(scalars, [t for t in acc_tags  if 'train' in t.lower()])
+    val_acc_pt    = latest(scalars, [t for t in acc_tags  if 'val'   in t.lower()])
+    lr_pt         = latest(scalars, lr_tags)
+    epoch         = train_loss_pt[0] if train_loss_pt else 0
 
-    def next_ax():
-        nonlocal ax_idx
-        row, col = divmod(ax_idx, 2)
-        ax = fig.add_subplot(gs[row, col], **style)
-        ax_idx += 1
-        return ax
+    card_data = [
+        ('Epoch',      str(epoch),                                          BLUE),
+        ('Train Loss', f"{train_loss_pt[1]:.4f}" if train_loss_pt else '—', BLUE),
+        ('Val Loss',   f"{val_loss_pt[1]:.4f}"   if val_loss_pt   else '—', ORANGE),
+        ('Train Acc',  f"{train_acc_pt[1]:.1f}%" if train_acc_pt  else '—', GREEN),
+        ('Val Acc',    f"{val_acc_pt[1]:.1f}%"   if val_acc_pt    else '—', GREEN),
+        ('LR',         f"{lr_pt[1]:.2e}"          if lr_pt         else '—', PURPLE),
+    ]
 
-    def plot_group(tags, title, log_scale=False):
-        if not tags:
-            return
-        ax = next_ax()
-        for i, tag in enumerate(tags):
-            pts = scalars[tag]
-            if not pts:
-                continue
-            steps, vals = zip(*pts)
-            label = tag.split('/')[-1]
-            ax.plot(steps, vals, color=COLORS[i % len(COLORS)], lw=1.5,
-                    label=label, marker='o' if len(steps) < 30 else None, ms=3)
-        ax.set_title(title, color='white', fontsize=10)
-        ax.tick_params(colors='#aaaaaa', labelsize=8)
-        for spine in ax.spines.values():
-            spine.set_edgecolor('#333355')
-        ax.set_facecolor('#0f3460')
-        ax.set_xlabel('step', color='#aaaaaa', fontsize=8)
-        if log_scale:
-            ax.set_yscale('log')
-        ax.legend(fontsize=7, facecolor='#1a1a2e', labelcolor='white',
-                  framealpha=0.7, loc='best')
-        ax.grid(True, color='#2a2a4a', linewidth=0.5)
+    # Use a nested GridSpec for cards inside row 0
+    gs_cards = gridspec.GridSpecFromSubplotSpec(
+        1, len(card_data), subplot_spec=gs[0], wspace=0.06)
 
-    plot_group(loss_tags, 'Loss', log_scale=False)
-    plot_group(acc_tags,  'Accuracy (%)')
-    plot_group(lr_tags,   'Learning Rate', log_scale=True)
-    plot_group(other_tags, 'Other')
+    for i, (lbl, val, col) in enumerate(card_data):
+        ax = fig.add_subplot(gs_cards[i], facecolor=PANEL2)
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis('off')
+        for sp in ax.spines.values():
+            sp.set_visible(True); sp.set_edgecolor(BORDER); sp.set_linewidth(0.8)
+        # top accent bar
+        ax.axhline(y=0.88, color=col, linewidth=3, alpha=0.7, xmin=0.08, xmax=0.92)
+        ax.text(0.5, 0.55, val, ha='center', va='center',
+                color=col, fontsize=17, fontweight='bold', transform=ax.transAxes)
+        ax.text(0.5, 0.18, lbl, ha='center', va='center',
+                color=DIM, fontsize=8.5, transform=ax.transAxes)
 
-    # Progress summary panel
-    if n_plots == 0:
-        ax = next_ax()
-        ax.text(0.5, 0.5, 'No scalar data yet\n(waiting for first epoch)',
-                ha='center', va='center', color='#aaaaaa', fontsize=11,
-                transform=ax.transAxes)
-        ax.set_facecolor('#0f3460')
+    # ── Plots row ─────────────────────────────────────────────────────────────
+    if has_data:
+        gs_plots = gridspec.GridSpecFromSubplotSpec(
+            1, 3, subplot_spec=gs[1], wspace=0.30)
 
-    # Job log panel (spans full width)
+        ax_loss = fig.add_subplot(gs_plots[0])
+        style_ax(ax_loss, 'Loss', 'loss')
+        plot_series(ax_loss, scalars, loss_tags)
+
+        ax_acc = fig.add_subplot(gs_plots[1])
+        style_ax(ax_acc, 'Accuracy', '%')
+        plot_series(ax_acc, scalars, acc_tags)
+
+        ax_lr = fig.add_subplot(gs_plots[2])
+        style_ax(ax_lr, 'Learning Rate', 'lr', log_scale=True)
+        plot_series(ax_lr, scalars, lr_tags)
+    else:
+        ax_w = fig.add_subplot(gs[1], facecolor=PANEL)
+        ax_w.axis('off')
+        ax_w.text(0.5, 0.55, 'Waiting for first epoch to complete...',
+                  ha='center', va='center', color=DIM,
+                  fontsize=14, transform=ax_w.transAxes)
+        ax_w.text(0.5, 0.38,
+                  'TensorBoard scalars are written once per epoch.\n'
+                  'Dashboard will populate automatically.',
+                  ha='center', va='center', color=DIM, fontsize=9.5,
+                  transform=ax_w.transAxes, linespacing=2.0)
+
+    # ── Log row ───────────────────────────────────────────────────────────────
     if has_log:
-        log_row = (ax_idx + 1) // 2
-        ax_log = fig.add_subplot(gs[log_row:log_row+2, :], facecolor='#0d0d1a')
-        ax_log.set_title('Job stdout (recent)', color='white', fontsize=10)
+        ax_log = fig.add_subplot(gs[2], facecolor=PANEL2)
         ax_log.axis('off')
-        text = '\n'.join(job_lines[-40:])
-        ax_log.text(0.01, 0.99, text, transform=ax_log.transAxes,
-                    va='top', ha='left', fontsize=6.5, color='#00ff88',
-                    fontfamily='monospace', wrap=False)
+        for sp in ax_log.spines.values():
+            sp.set_visible(True); sp.set_edgecolor(BORDER)
+        ax_log.text(0.01, 0.97, 'Job stdout',
+                    color=DIM, fontsize=8, fontweight='bold',
+                    va='top', transform=ax_log.transAxes)
+        ax_log.text(0.01, 0.88, '\n'.join(job_lines),
+                    va='top', ha='left', fontsize=6.8, color=GREEN,
+                    fontfamily='monospace', transform=ax_log.transAxes)
 
     if save:
-        outpath = Path(outdir) / f"dashboard_{Path(logdir).name}.png"
-        fig.savefig(outpath, dpi=110, bbox_inches='tight', facecolor=fig.get_facecolor())
-        print(f"[{ts}] Saved → {outpath}")
+        out = Path(outdir) / f"dashboard_{run}.png"
+        fig.savefig(out, dpi=120, bbox_inches='tight',
+                    facecolor=BG, edgecolor='none')
+        print(f"[{ts}] Saved -> {out}")
 
     if show:
         fig.canvas.draw_idle()
@@ -186,75 +262,58 @@ def make_dashboard(scalars, logdir, job_lines=None, outdir='/tmp', save=True, sh
     return fig
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--project',  default=None)
-    parser.add_argument('--net',      default='HybridNet',
-                        choices=['HybridNet', 'CenterDetect', 'KeypointDetect'])
-    parser.add_argument('--logdir',   default=None)
-    parser.add_argument('--jobdir',   default=None,
-                        help='Root of JARVIS project dir (contains projects/)')
-    parser.add_argument('--jobid',    default=None, help='LSF job ID for bpeek')
-    parser.add_argument('--ssh-host', default='doq@login1')
-    parser.add_argument('--interval', type=float, default=30,
-                        help='Refresh interval in seconds')
-    parser.add_argument('--no-show',  action='store_true',
-                        help='Save PNG only, no interactive window')
-    parser.add_argument('--outdir',   default='/tmp')
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('--project',  default=None)
+    p.add_argument('--net',      default='HybridNet',
+                   choices=['HybridNet', 'CenterDetect', 'KeypointDetect'])
+    p.add_argument('--logdir',   default=None)
+    p.add_argument('--jobdir',   default=None)
+    p.add_argument('--jobid',    default=None)
+    p.add_argument('--ssh-host', default='doq@login1')
+    p.add_argument('--interval', type=float, default=30)
+    p.add_argument('--no-show',  action='store_true')
+    p.add_argument('--outdir',   default='/tmp')
+    args = p.parse_args()
 
-    # Resolve logdir
     logdir = args.logdir
     if logdir is None:
-        # Search known roots
-        roots = []
-        if args.jobdir:
-            roots.append(Path(args.jobdir) / 'projects' / args.project)
-        elif args.project:
+        if args.project:
             candidates = [
                 Path('/mnt/johnson_lab/doq/JARVIS-HybridNet/projects') / args.project,
                 Path.cwd() / 'projects' / args.project,
             ]
             roots = [c for c in candidates if c.exists()]
+        elif args.jobdir:
+            roots = [Path(args.jobdir) / 'projects' / args.project]
+        else:
+            sys.exit("Specify --logdir or --project")
         if not roots:
-            sys.exit("Specify --logdir or --project with a valid project root.")
+            sys.exit(f"Project root not found")
         logdir = find_latest_logdir(roots[0], args.net)
         if logdir is None:
-            sys.exit(f"No log runs found under {roots[0]}/logs/{args.net}/")
-        print(f"Using log dir: {logdir}")
+            sys.exit(f"No runs found")
+        print(f"Using: {logdir}")
 
     show = not args.no_show
-    if show:
-        matplotlib.use('TkAgg' if 'DISPLAY' in os.environ else 'Agg')
-    else:
-        matplotlib.use('Agg')
+    matplotlib.use('TkAgg' if (show and 'DISPLAY' in os.environ) else 'Agg')
 
     print(f"Monitoring {logdir}")
-    print(f"Refresh every {args.interval}s  |  Ctrl-C to stop")
+    print(f"Interval: {args.interval}s  |  Ctrl-C to stop")
 
     try:
         fig = None
         while True:
-            scalars = read_tf_events(logdir)
-
-            job_lines = None
-            if args.jobid:
-                job_lines = bpeek_tail(args.jobid, args.ssh_host)
-
+            scalars   = read_tf_events(logdir)
+            job_lines = bpeek_tail(args.jobid, args.ssh_host) if args.jobid else None
             fig = make_dashboard(scalars, logdir,
-                                 job_lines=job_lines,
-                                 outdir=args.outdir,
-                                 save=True,
-                                 show=show,
-                                 fig=fig)
-
-            total_steps = sum(pts[-1][0] for pts in scalars.values() if pts) if scalars else 0
-            print(f"  tags={list(scalars.keys())}  latest_step={total_steps}")
-
+                                 job_lines=job_lines, outdir=args.outdir,
+                                 save=True, show=show, fig=fig)
+            n = sum(len(v) for v in scalars.values())
+            print(f"  {len(scalars)} tags, {n} points")
             time.sleep(args.interval)
-
     except KeyboardInterrupt:
         print("\nStopped.")
 
