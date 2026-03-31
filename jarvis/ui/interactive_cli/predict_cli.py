@@ -144,7 +144,11 @@ def predict_3D():
             params.dataset_name = inq.list_input("Which calibration should "
                         "be used?", choices = calibrations)
 
-    example_vid = os.path.join(recordings_path,os.listdir(recordings_path)[0])
+    example_vid = os.path.join(
+                        recordings_path,
+                        [f for f in os.listdir(recordings_path) if f.lower().endswith('.mp4')][0]
+                    )
+    print(f"example vid is {example_vid}")
     params.frame_start, params.number_frames = \
                 get_frame_start_number(example_vid)
 
@@ -163,6 +167,7 @@ def get_frame_start_number(video_path):
         number_frames = -1
     else:
         if (os.path.isfile(video_path)):
+            print("will be an individual video")
             cap = cv2.VideoCapture(video_path)
             total_number_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
             frame_start = int(inq.text(f"Frame to start predictions at "
@@ -176,6 +181,7 @@ def get_frame_start_number(video_path):
                         and (int(x) > 0 or int(x) == -1)
                         and int(x) < max_num_frames)))
         else:
+            print("will be for all videos")
             frame_start = int(inq.text(f"Frame to start predictions at ", default = "0",
                         validate = lambda _, x: (x.isdigit() and int(x) >= 0)))
             number_frames = int(inq.text(f"Number of frames to predict pose for ", default = "-1",

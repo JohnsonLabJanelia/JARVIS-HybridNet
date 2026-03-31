@@ -14,7 +14,7 @@ import jarvis.utils.clp as clp
 from jarvis.visualization.visualize_dataset import visualize_2D_sample, \
             visualize_3D_sample
 from jarvis.config.project_manager import ProjectManager
-from jarvis.visualization.create_videos3D import \
+from jarvis.visualization.create_videos3D_old import \
             create_videos3D as create_videos3D_func
 from jarvis.visualization.create_videos2D import \
             create_videos2D as create_videos2D_func

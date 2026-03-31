@@ -19,7 +19,7 @@ from jarvis.visualization.visualize_dataset import visualize_2D_sample, \
             visualize_3D_sample
 from jarvis.dataset.dataset2D import Dataset2D
 from jarvis.dataset.dataset3D import Dataset3D
-from jarvis.visualization.create_videos3D import create_videos3D
+from jarvis.visualization.create_videos3D_old import create_videos3D
 from jarvis.visualization.create_videos2D import create_videos2D
 from jarvis.utils.paramClasses import CreateVideos3DParams, CreateVideos2DParams
 
