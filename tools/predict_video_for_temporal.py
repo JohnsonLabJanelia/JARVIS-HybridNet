@@ -160,6 +160,15 @@ def main():
     failed = 0
     times = []
 
+    # Prepare CSV output (standard JARVIS format)
+    camera_names_cfg = camera_names  # already defined above
+    project_mgr = ProjectManager()
+    project_mgr.load(args.project)
+    cfg_for_names = project_mgr.get_cfg()
+    kp_names = list(cfg_for_names.KEYPOINT_NAMES)
+    csv_path = os.path.join(args.output, 'data3D.csv')
+    csv_rows = []
+
     # Seek to start frame once, then read sequentially
     seek_all(caps, camera_names, args.start_frame)
     prev_frame = args.start_frame
@@ -202,17 +211,41 @@ def main():
                     session=session_name,
                     frame_name=f'Frame_{frame_idx}',
                 )
+                # Build CSV row: x,y,z,conf per joint
+                row = []
+                for j in range(len(pts)):
+                    row.extend([pts[j][0], pts[j][1], pts[j][2], conf[j]])
+                csv_rows.append(row)
                 saved += 1
             else:
+                # Empty row for failed frames
+                csv_rows.append([0.0] * (len(kp_names) * 4))
                 failed += 1
 
     for cap in caps.values():
         cap.release()
 
+    # Write CSV in standard JARVIS format
+    import csv
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        # Header row 1: joint names (repeated 4x each)
+        header1 = []
+        for name in kp_names:
+            header1.extend([name] * 4)
+        writer.writerow(header1)
+        # Header row 2: x,y,z,confidence repeated
+        header2 = ['x', 'y', 'z', 'confidence'] * len(kp_names)
+        writer.writerow(header2)
+        # Data rows
+        for row in csv_rows:
+            writer.writerow(row)
+
     print(f"\nDone! Saved {saved} predictions, {failed} failed frames")
     print(f"Mean inference: {np.mean(times)*1000:.0f} ms/frame "
           f"({1.0/np.mean(times):.1f} FPS)")
-    print(f"Output: {args.output}/")
+    print(f"CSV output: {csv_path}")
+    print(f"NPZ output: {args.output}/")
 
 
 if __name__ == '__main__':

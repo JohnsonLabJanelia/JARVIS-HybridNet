@@ -47,21 +47,51 @@ Note: Requires gradient checkpointing or reduced grid resolution for training on
 
 ### Temporal Refinement Transformer (TemporalRefinementTransformer)
 
-A 4-layer transformer encoder (809K parameters) that takes a sliding window of T consecutive frames of 3D keypoint predictions and refines them using self-attention over both temporal and spatial (joint) dimensions. Each (frame, joint) pair is a token with learned temporal and spatial positional encodings. The output is a residual correction added to the input predictions.
+A 4-layer transformer encoder (809K parameters) that post-processes HybridNet's frame-by-frame 3D predictions to produce temporally smooth trajectories. It operates on sliding windows of T=16 consecutive frames, using self-attention across both time and joint dimensions to learn natural motion patterns.
 
-**Loss function:** Position MSE + bone length consistency + velocity smoothness (acceleration penalty).
+**The problem it solves:** HybridNet processes each frame independently, so predictions can jitter or jump between frames even when the animal moves smoothly. The temporal transformer learns to correct these inconsistencies.
 
-**Usage:**
-```bash
-# 1. Extract dense predictions from a multi-camera video
-python tools/predict_video_for_temporal.py --project mouseJan30 \
-    --video_dir /path/to/video --calib_dir /path/to/calibration \
-    --output predictions/train --num_frames 1000
+**How it works:**
 
-# 2. Train the temporal transformer
-python tools/train_temporal.py --project mouseJan30 \
-    --predictions predictions/ --epochs 100
 ```
+Step 1: Run HybridNet on video         → per-frame 3D keypoints (noisy, jittery)
+Step 2: Group into sliding windows      → (batch, 16 frames, 24 joints, xyz)
+Step 3: Temporal transformer refines    → smoother, more consistent keypoints
+```
+
+Each (frame, joint) pair becomes a token (768 tokens per window). Learned temporal and spatial positional encodings tell the transformer which frame and which joint each token represents. The output is a small residual correction added to the input — so it only adjusts what needs fixing.
+
+**Training pipeline:**
+
+The transformer needs dense consecutive predictions from real video (not the sparse labeled dataset). It uses Savitzky-Golay-smoothed predictions as training targets, learning to produce the smooth version from the raw version.
+
+```bash
+# 1. Run HybridNet on multi-camera video to get dense predictions
+#    Outputs: per-frame .npz files (for temporal training) + data3D.csv (standard JARVIS format)
+python tools/predict_video_for_temporal.py --project mouseJan30 \
+    --video_dir /path/to/16cam/video \
+    --calib_dir /path/to/calibration \
+    --output predictions/my_video/train \
+    --start_frame 0 --num_frames 5000
+
+# 2. Create smoothed training targets from the raw predictions
+python tools/prepare_temporal_data.py --project mouseJan30 \
+    --output predictions/my_video
+
+# 3. Train the temporal transformer
+python tools/train_temporal.py --project mouseJan30 \
+    --predictions predictions/my_video \
+    --epochs 100 --lr 0.0003
+
+# 4. Or run the full pipeline (steps 1-3 + evaluation) in one command:
+bash tools/run_full_pipeline.sh /path/to/hybridnet_weights.pth
+```
+
+**Output formats:**
+- `.npz` files: per-frame numpy arrays used internally by the temporal training pipeline (points3D, confidences, gt_keypoints3D)
+- `data3D.csv`: standard JARVIS format with header `joint_name` x4, subheader `x,y,z,confidence`, one row per frame. This is the final usable output.
+
+**Loss function:** Position MSE (toward smoothed target) + bone length consistency + velocity smoothness (acceleration penalty).
 
 ### Benchmark Results (mouseJan30, 275 val samples)
 
