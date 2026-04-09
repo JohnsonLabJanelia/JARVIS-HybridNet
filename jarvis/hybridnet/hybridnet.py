@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 
 from .model import HybridNetBackbone
 from .loss import MSELoss
+from .physics_loss import BoneLengthLoss
 import jarvis.utils.utils as utils
 from jarvis.utils.logger import NetLogger, AverageMeter
 import jarvis.utils.clp as clp
@@ -62,6 +63,22 @@ class HybridNet:
             self.load_weights(weights)
 
             self.criterion = MSELoss()
+            self.bone_loss_weight = self.cfg.HYBRIDNET.BONE_LENGTH_LOSS_WEIGHT
+            self.bone_criterion = None
+            if self.bone_loss_weight > 0:
+                bone_stats_path = os.path.join(
+                    self.cfg.PARENT_DIR, 'projects',
+                    self.cfg.PROJECT_NAME, 'bone_stats.json')
+                if os.path.isfile(bone_stats_path):
+                    self.bone_criterion = BoneLengthLoss.from_stats_file(
+                        bone_stats_path,
+                        list(self.cfg.KEYPOINT_NAMES),
+                        list(self.cfg.SKELETON))
+                    clp.info(f'Loaded bone length stats: {bone_stats_path}')
+                else:
+                    clp.warning(f'Bone stats not found at {bone_stats_path}, '
+                                f'bone length loss disabled')
+                    self.bone_loss_weight = 0.0
             self.model = self.model.cuda()
 
             if self.cfg.HYBRIDNET.OPTIMIZER == 'adamw':
@@ -220,6 +237,9 @@ class HybridNet:
                                      distortionCoefficients)
                 loss = self.criterion(outputs[0], heatmap3D)
                 loss = loss.mean()
+                if self.bone_criterion is not None:
+                    loss = loss + self.bone_loss_weight * self.bone_criterion(
+                        outputs[2])
 
                 acc = 0
                 count = 0
@@ -307,6 +327,9 @@ class HybridNet:
                                              distortionCoefficients)
                         loss = self.criterion(outputs[0], heatmap3D)
                         loss = loss.mean()
+                        if self.bone_criterion is not None:
+                            loss = loss + self.bone_loss_weight * \
+                                self.bone_criterion(outputs[2])
                         acc = 0
                         count = 0
                         for i,keypoints_batch in enumerate(keypoints):

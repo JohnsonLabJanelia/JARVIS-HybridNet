@@ -8,6 +8,8 @@ Licensed under GNU Lesser General Public License v2.1
 import torch
 import torch.nn as nn
 
+from .cross_view_attention import CrossViewAttention
+
 class ReprojectionLayer(nn.Module):
     def __init__(self, cfg, num_cameras = None):
         super(ReprojectionLayer, self).__init__()
@@ -22,6 +24,12 @@ class ReprojectionLayer(nn.Module):
             self.num_cameras = num_cameras
         else:
             self.num_cameras = self.cfg.HYBRIDNET.NUM_CAMERAS
+
+        self.use_cross_view_attention = self.cfg.HYBRIDNET.USE_CROSS_VIEW_ATTENTION
+        if self.use_cross_view_attention:
+            self.cross_view_attn = CrossViewAttention(
+                num_cameras=self.num_cameras,
+                num_joints=self.cfg.KEYPOINTDETECT.NUM_JOINTS)
 
         self.grid = torch.zeros((int(self.grid_size/2), int(self.grid_size/2),
                                  int(self.grid_size/2),3))
@@ -100,9 +108,12 @@ class ReprojectionLayer(nn.Module):
         heatmaps = heatmaps.flatten(1);
         reproPoints = (reproPoints.flatten(1).transpose(1,0)
                     + cam_offset).transpose(1,0).flatten()
-        outs = torch.mean(torch.index_select(heatmaps, 1, reproPoints).view(
-                    (num_joints,num_cameras,grid_size,grid_size,grid_size)),
-                    dim = 1)
+        per_cam = torch.index_select(heatmaps, 1, reproPoints).view(
+                    (num_joints,num_cameras,grid_size,grid_size,grid_size))
+        if self.use_cross_view_attention:
+            outs = self.cross_view_attn(per_cam)
+        else:
+            outs = torch.mean(per_cam, dim = 1)
 
         return outs
 
