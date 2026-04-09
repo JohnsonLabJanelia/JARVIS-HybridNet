@@ -17,81 +17,137 @@ Check out our [Getting Started Guide](https://jarvis-mocap.github.io/jarvis-docs
 
 ## Temporal & Physics Extensions
 
-This branch adds three architectural improvements to reduce keypoint jitter and improve 3D accuracy, all backward-compatible and disabled by default.
+This branch adds improvements to reduce keypoint jitter and improve 3D accuracy. There are two separate things here:
 
-### Bone Length Loss (BoneLengthLoss)
+1. **Changes to HybridNet itself** (bone length loss, cross-view attention) — these modify how HybridNet trains and runs. The trained model weights include these changes.
+2. **A separate post-processing network** (temporal transformer) — this is a completely independent network that runs AFTER HybridNet to smooth its output. It has its own weights, its own training, and is optional.
 
-Penalizes predicted bone lengths that deviate from reference statistics computed from the training ground truth. Each of the 24 skeleton bones has a learned mean and standard deviation; deviations are penalized as normalized squared error during training.
+### Architecture Overview
+
+```
+                    NETWORK 1: HybridNet (modified)
+                    ================================
+                    Trained on labeled dataset with ground truth.
+                    Runs on each frame independently.
+
+  16 camera       EfficientTrack    ReprojectionLayer     V2VNet        3D keypoints
+  images -------> 2D keypoint ----> (cross-view attn) --> 3D refine --> (x,y,z) per joint
+  (per frame)     detection         + camera fusion       + bone loss   + confidence
+                                                          constrains
+                                                          training
+                                          |
+                                          | output: data3D.csv
+                                          | (standard JARVIS format, one row per frame)
+                                          v
+                    NETWORK 2: Temporal Transformer (separate, optional)
+                    =================================================
+                    Trained on HybridNet's own predictions from unlabeled video.
+                    Runs on sequences of frames, not individual frames.
+
+  Window of 16    Transformer       Smoothed
+  consecutive --> encoder with  --> 3D keypoints
+  HybridNet       temporal +        (less jitter)
+  predictions     spatial attention
+  (from csv/npz)
+                                          |
+                                          v
+                                   smoothed data3D.csv
+```
+
+**Key distinction:**
+- HybridNet is the main network. It sees images and outputs 3D keypoints. You MUST have this.
+- The temporal transformer is a small optional post-processing network (809K params). It never sees images — it only takes HybridNet's 3D keypoint output and smooths it across time. You can skip it entirely and just use HybridNet's output.
+
+---
+
+### 1. Bone Length Loss (inside HybridNet)
+
+A new loss term added to HybridNet's training. It penalizes predicted bone lengths that deviate from reference statistics computed from the training ground truth. This does NOT change the network architecture — it only changes what the network learns during training. The resulting trained weights produce more physically plausible predictions.
 
 **Result:** MPJPE improved from 15.3mm to 12.6mm (**-17.4%**), bone length consistency improved by **41%**, with no loss in inference speed.
 
 **Usage:**
 ```bash
-# 1. Compute bone stats from your training data
+# 1. Compute bone stats from your training data (one time)
 python tools/compute_bone_lengths.py --project mouseJan30
 
-# 2. Train with bone loss enabled
+# 2. Train HybridNet with bone loss enabled
 python tools/train_hybridnet_improved.py --project mouseJan30 \
     --bone_weight 0.1 --epochs 8 --mode 3D_only
 ```
 
 Config: set `HYBRIDNET.BONE_LENGTH_LOSS_WEIGHT: 0.1` to enable.
 
-### Cross-View Attention (CrossViewAttention)
+### 2. Cross-View Attention (inside HybridNet)
 
-Replaces the naive averaging of 2D heatmaps across camera views with learned per-camera per-joint attention weights. A lightweight MLP (5.2K parameters) computes camera reliability from heatmap statistics (max, mean, std, energy), producing softmax-normalized weights. This lets the network learn which cameras provide the best signal for each keypoint.
+Replaces the naive averaging of 2D heatmaps across camera views (in HybridNet's ReprojectionLayer) with learned per-camera per-joint attention weights. A lightweight MLP (5.2K parameters) computes camera reliability from heatmap statistics, producing softmax-normalized weights. This IS a change to the network architecture — models trained with this need `USE_CROSS_VIEW_ATTENTION: true` at inference time too.
 
 **Usage:** Set `HYBRIDNET.USE_CROSS_VIEW_ATTENTION: true` in the project config.
 
-Note: Requires gradient checkpointing or reduced grid resolution for training on 24GB GPUs (the 100^3 grid with 16 cameras is memory-intensive during backprop).
+Note: Requires gradient checkpointing or reduced grid resolution for training on 24GB GPUs.
 
-### Temporal Refinement Transformer (TemporalRefinementTransformer)
+### 3. Temporal Transformer (separate network, optional post-processing)
 
-A 4-layer transformer encoder (809K parameters) that post-processes HybridNet's frame-by-frame 3D predictions to produce temporally smooth trajectories. It operates on sliding windows of T=16 consecutive frames, using self-attention across both time and joint dimensions to learn natural motion patterns.
+A completely separate neural network that smooths HybridNet's output over time. It does NOT modify HybridNet in any way. You can use HybridNet with or without it.
 
-**The problem it solves:** HybridNet processes each frame independently, so predictions can jitter or jump between frames even when the animal moves smoothly. The temporal transformer learns to correct these inconsistencies.
+**Why it exists:** HybridNet processes each video frame independently. It has no concept of "the previous frame" or "the next frame." This means its predictions can jump around between frames even when the animal moves smoothly. The temporal transformer takes a window of 16 consecutive predictions and smooths them using self-attention.
 
-**How it works:**
+**How it is trained (requires unlabeled video only):**
 
 ```
-Step 1: Run HybridNet on video         → per-frame 3D keypoints (noisy, jittery)
-Step 2: Group into sliding windows      → (batch, 16 frames, 24 joints, xyz)
-Step 3: Temporal transformer refines    → smoother, more consistent keypoints
+ Unlabeled          HybridNet             Raw 3D              Savgol filter        Temporal
+ multi-camera  ---> (already trained, --> predictions    ---> (offline          --> transformer
+ video              frozen)               per frame           smoothing)            learns to map
+                                          (.npz files)        = training targets    raw --> smooth
 ```
 
-Each (frame, joint) pair becomes a token (768 tokens per window). Learned temporal and spatial positional encodings tell the transformer which frame and which joint each token represents. The output is a small residual correction added to the input — so it only adjusts what needs fixing.
+The temporal transformer does NOT need ground truth labels. It learns from HybridNet's own predictions on any video:
+1. Run HybridNet on a video to get dense per-frame predictions
+2. Apply a Savitzky-Golay filter offline to create smoothed versions
+3. Train the transformer to produce the smoothed version from the raw version
 
-**Training pipeline:**
+This means you can train it on any video you have, even without annotations.
 
-The transformer needs dense consecutive predictions from real video (not the sparse labeled dataset). It uses Savitzky-Golay-smoothed predictions as training targets, learning to produce the smooth version from the raw version.
-
+**Training:**
 ```bash
-# 1. Run HybridNet on multi-camera video to get dense predictions
-#    Outputs: per-frame .npz files (for temporal training) + data3D.csv (standard JARVIS format)
+# Step 1: Run HybridNet on video (outputs .npz + data3D.csv)
 python tools/predict_video_for_temporal.py --project mouseJan30 \
     --video_dir /path/to/16cam/video \
     --calib_dir /path/to/calibration \
     --output predictions/my_video/train \
     --start_frame 0 --num_frames 5000
 
-# 2. Create smoothed training targets from the raw predictions
+# Step 2: Create smoothed training targets
 python tools/prepare_temporal_data.py --project mouseJan30 \
     --output predictions/my_video
 
-# 3. Train the temporal transformer
+# Step 3: Train the temporal transformer
 python tools/train_temporal.py --project mouseJan30 \
     --predictions predictions/my_video \
     --epochs 100 --lr 0.0003
+```
 
-# 4. Or run the full pipeline (steps 1-3 + evaluation) in one command:
-bash tools/run_full_pipeline.sh /path/to/hybridnet_weights.pth
+**At inference time, you have two options:**
+
+Option A — HybridNet only (simpler):
+```bash
+python tools/predict_video_for_temporal.py --project mouseJan30 \
+    --video_dir /path/to/video --calib_dir /path/to/calibration \
+    --output my_predictions
+# Output: my_predictions/data3D.csv (standard JARVIS format)
+```
+
+Option B — HybridNet + temporal transformer (smoother):
+```bash
+# Same as above, then run the temporal transformer on the output
+# (inference script TBD — currently only training pipeline is implemented)
 ```
 
 **Output formats:**
-- `.npz` files: per-frame numpy arrays used internally by the temporal training pipeline (points3D, confidences, gt_keypoints3D)
-- `data3D.csv`: standard JARVIS format with header `joint_name` x4, subheader `x,y,z,confidence`, one row per frame. This is the final usable output.
+- `data3D.csv` — standard JARVIS format: header row with joint names (x4 each), subheader `x,y,z,confidence`, one row per frame. This is the usable output for downstream analysis.
+- `.npz` files — per-frame numpy arrays used internally by the temporal training pipeline. Not needed for regular use.
 
-**Loss function:** Position MSE (toward smoothed target) + bone length consistency + velocity smoothness (acceleration penalty).
+---
 
 ### Benchmark Results (mouseJan30, 275 val samples)
 
@@ -107,13 +163,17 @@ bash tools/run_full_pipeline.sh /path/to/hybridnet_weights.pth
 
 | Script | Purpose |
 |--------|---------|
+| **HybridNet training** | |
 | `tools/compute_bone_lengths.py` | Compute bone length reference stats from training GT |
 | `tools/train_hybridnet_improved.py` | Fine-tune HybridNet with bone loss / cross-view attention |
 | `tools/evaluate_baseline.py` | Evaluate model with per-joint MPJPE, bone consistency, speed |
-| `tools/predict_video_for_temporal.py` | Run 3D prediction on multi-camera MP4 videos |
-| `tools/prepare_temporal_data.py` | Generate training data for temporal transformer |
+| **Video prediction** | |
+| `tools/predict_video_for_temporal.py` | Run HybridNet 3D prediction on multi-camera MP4 videos |
+| **Temporal transformer training** | |
+| `tools/prepare_temporal_data.py` | Create smoothed training targets from HybridNet predictions |
 | `tools/train_temporal.py` | Train the temporal refinement transformer |
-| `tools/run_full_pipeline.sh` | Run full eval + extraction + temporal pipeline |
+| `tools/run_full_pipeline.sh` | Run full pipeline: evaluate + extract + smooth + train temporal |
+| **Visualization** | |
 | `tools/plot_comparison.py` | Generate comparison plots between models |
 
 ## Install Instructions
