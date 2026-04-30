@@ -122,7 +122,8 @@ class EfficientTrack:
                     self._resume_epoch = ckpt.get('epoch', 0)
                     self._resume_meta = ckpt.get('meta')
                 clp.info(f'Successfully loaded weights: {weights_path}')
-                if self._resume_epoch > 0:
+                is_training = self.mode in ('CenterDetect', 'KeypointDetect')
+                if is_training and self._resume_epoch > 0:
                     clp.info(f'  Resuming from epoch {self._resume_epoch} '
                                 f'(optimizer + scheduler state attached).')
                 return True

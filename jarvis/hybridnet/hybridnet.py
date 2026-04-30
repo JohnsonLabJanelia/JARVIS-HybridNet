@@ -103,7 +103,7 @@ class HybridNet:
                     state_dict = ckpt
                 self.model.load_state_dict(state_dict, strict=True)
                 clp.info(f'Loaded Hybridnet weights: {weights_path}')
-                if self._resume_epoch > 0:
+                if self.mode == 'train' and self._resume_epoch > 0:
                     clp.info(f'  Resuming from epoch {self._resume_epoch} '
                                 f'(optimizer + scheduler state attached).')
                 return True
