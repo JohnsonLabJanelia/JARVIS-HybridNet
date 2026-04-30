@@ -30,8 +30,11 @@ class HybridNetBackbone(nn.Module):
                     output_channels = self.cfg.KEYPOINTDETECT.NUM_JOINTS)
 
         if efficienttrack_weights != None:
-            self.effTrack.load_state_dict(torch.load(efficienttrack_weights),
-                        strict = True)
+            ckpt = torch.load(efficienttrack_weights)
+            if (isinstance(ckpt, dict) and 'model' in ckpt
+                        and 'optimizer' in ckpt):
+                ckpt = ckpt['model']
+            self.effTrack.load_state_dict(ckpt, strict = True)
 
         self.reproLayer = ReprojectionLayer(cfg)
 
@@ -85,6 +88,5 @@ class HybridNetBackbone(nn.Module):
                     *heatmap_final.shape[:2], -1), dim = 2)[0], max = 255.)/255.
         points3D = (points3D.transpose(0,1)*self.grid_spacing*2 - self.grid_size
                     / 2. + center3D).transpose(0,1)
-        heatmap_final = self.softplus(heatmap_final)
 
         return heatmap_final, heatmaps_padded, points3D, confidences

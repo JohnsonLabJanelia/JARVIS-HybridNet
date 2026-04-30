@@ -88,23 +88,43 @@ class EfficientTrack:
 
 
     def load_weights(self, weights_path = None):
+        self._resume_optimizer = None
+        self._resume_scheduler = None
+        self._resume_epoch = 0
+        self._resume_meta = None
         if weights_path == 'latest':
             weights_path =  self.get_latest_weights()
         if weights_path is not None:
             if os.path.isfile(weights_path):
                 if torch.cuda.is_available():
-                    pretrained_dict = torch.load(weights_path)
+                    ckpt = torch.load(weights_path)
                 else:
-                    pretrained_dict = torch.load(weights_path,
+                    ckpt = torch.load(weights_path,
                                 map_location=torch.device('cpu'))
-                if (self.mode == "KeypointDetect" and
-                            pretrained_dict['final_conv1.weight'].shape[0]
-                            != self.cfg.NUM_JOINTS):
+                # Detect new-format resume bundle vs legacy weights-only file.
+                is_bundle = (isinstance(ckpt, dict)
+                            and 'model' in ckpt and 'optimizer' in ckpt)
+                if is_bundle:
+                    pretrained_dict = ckpt['model']
+                else:
+                    pretrained_dict = ckpt
+                joint_mismatch = (self.mode == "KeypointDetect"
+                            and pretrained_dict['final_conv1.weight'].shape[0]
+                            != self.cfg.NUM_JOINTS)
+                if joint_mismatch:
                     pretrained_dict = {k: v for k, v in pretrained_dict.items()
                                 if not k in ['final_conv1.weight',
                                 'final_conv2.weight']}
                 self.model.load_state_dict(pretrained_dict, strict=False)
+                if is_bundle and not joint_mismatch:
+                    self._resume_optimizer = ckpt.get('optimizer')
+                    self._resume_scheduler = ckpt.get('scheduler')
+                    self._resume_epoch = ckpt.get('epoch', 0)
+                    self._resume_meta = ckpt.get('meta')
                 clp.info(f'Successfully loaded weights: {weights_path}')
+                if self._resume_epoch > 0:
+                    clp.info(f'  Resuming from epoch {self._resume_epoch} '
+                                f'(optimizer + scheduler state attached).')
                 return True
             else:
                 return False
@@ -223,7 +243,8 @@ class EfficientTrack:
                     pin_memory = True,
                     drop_last = True)
 
-        epoch = start_epoch #TODO: actually use this and make it work properly with onecylce
+        self._train_num_epochs = num_epochs
+        self._train_steps_per_epoch = len(training_generator)
         self.model.train()
 
         latest_train_loss = 0
@@ -246,10 +267,26 @@ class EfficientTrack:
                         self.optimizer, patience=3, verbose=True,
                         min_lr=0.00005, factor = 0.2)
 
-        if streamlitWidgets != None:
-            streamlitWidgets[2].markdown(f"Epoch {1}/{num_epochs}")
+        if getattr(self, '_resume_optimizer', None) is not None:
+            self.optimizer.load_state_dict(self._resume_optimizer)
+        if getattr(self, '_resume_scheduler', None) is not None:
+            meta = self._resume_meta or {}
+            same_shape = (meta.get('num_epochs') == num_epochs
+                        and meta.get('steps_per_epoch')
+                        == len(training_generator))
+            if same_shape:
+                self.scheduler.load_state_dict(self._resume_scheduler)
+            else:
+                clp.warning('Scheduler state not restored: num_epochs or '
+                            'dataset size differs from the saved run. '
+                            'Continuing with a fresh schedule.')
+        start_epoch = max(start_epoch, getattr(self, '_resume_epoch', 0))
 
-        for epoch in range(num_epochs):
+        if streamlitWidgets != None:
+            streamlitWidgets[2].markdown(
+                        f"Epoch {start_epoch + 1}/{num_epochs}")
+
+        for epoch in range(start_epoch, num_epochs):
             progress_bar = tqdm(training_generator)
             for count,data in enumerate(progress_bar):
                 imgs = data[0].permute(0, 3, 1, 2).float()
@@ -306,10 +343,12 @@ class EfficientTrack:
             if (epoch + 1) % self.cfg.CHECKPOINT_SAVE_INTERVAL == 0:
                 if epoch + 1 < num_epochs:
                     self.save_checkpoint(f'EfficientTrack-'
-                                f'{self.cfg.MODEL_SIZE}_Epoch_{epoch+1}.pth')
+                                f'{self.cfg.MODEL_SIZE}_Epoch_{epoch+1}.pth',
+                                epoch=epoch + 1)
             if epoch + 1 == num_epochs:
                 self.save_checkpoint(f'EfficientTrack-'
-                            f'{self.cfg.MODEL_SIZE}_final.pth')
+                            f'{self.cfg.MODEL_SIZE}_final.pth',
+                            epoch=epoch + 1)
 
             if (epoch + 1) % self.cfg.VAL_INTERVAL == 0:
                 self.model.eval()
@@ -396,6 +435,18 @@ class EfficientTrack:
         return np.nanmean(masked)
 
 
-    def save_checkpoint(self, name):
-        torch.save(self.model.state_dict(),
-                   os.path.join(self.model_savepath, name))
+    def save_checkpoint(self, name, epoch=None):
+        bundle = {
+            'model': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': (self.scheduler.state_dict()
+                        if getattr(self, 'scheduler', None) is not None
+                        else None),
+            'epoch': epoch,
+            'meta': {
+                'num_epochs': getattr(self, '_train_num_epochs', None),
+                'steps_per_epoch': getattr(self,
+                            '_train_steps_per_epoch', None),
+            },
+        }
+        torch.save(bundle, os.path.join(self.model_savepath, name))

@@ -22,7 +22,12 @@ from jarvis.utils.utils import get_available_pretrains
 def load_weights_keypoint_detect(model, weights_path = None):
     if weights_path is not None:
         if os.path.isfile(weights_path):
-            pretrained_dict = torch.load(weights_path)
+            ckpt = torch.load(weights_path)
+            if (isinstance(ckpt, dict) and 'model' in ckpt
+                        and 'optimizer' in ckpt):
+                pretrained_dict = ckpt['model']
+            else:
+                pretrained_dict = ckpt
             model.load_state_dict(pretrained_dict, strict=False)
             clp.info(f'Successfully loaded weights: {weights_path}')
             return True

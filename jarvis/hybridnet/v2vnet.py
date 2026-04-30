@@ -84,14 +84,16 @@ class EncoderDecorder(nn.Module):
 
 
 class V2VNet(nn.Module):
-    def __init__(self, input_channels, output_channels):
+    def __init__(self, input_channels, output_channels, base_width=None):
         super(V2VNet, self).__init__()
+        if base_width is None:
+            base_width = max(input_channels, 16)
         self.front_layers = nn.Sequential(
-            Basic3DBlock(input_channels, input_channels*2, 3,2),
-            Res3DBlock(input_channels*2, input_channels*2)
+            Basic3DBlock(input_channels, base_width*2, 3,2),
+            Res3DBlock(base_width*2, base_width*2)
         )
-        self.encoder_decoder = EncoderDecorder(input_channels)
-        self.output_layer = nn.Conv3d(input_channels*2, output_channels,
+        self.encoder_decoder = EncoderDecorder(base_width)
+        self.output_layer = nn.Conv3d(base_width*2, output_channels,
                     kernel_size=1, stride=1)
         self._initialize_weights()
 
