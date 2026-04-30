@@ -43,6 +43,9 @@ _C.CENTERDETECT.MAX_LEARNING_RATE = 0.003
 _C.CENTERDETECT.NUM_EPOCHS = 50
 _C.CENTERDETECT.CHECKPOINT_SAVE_INTERVAL = 10
 _C.CENTERDETECT.VAL_INTERVAL = 1
+# Default 0 disables early stopping. Recommended with OneCycleLR: keep at 0
+# (best-model checkpointing handles overfit capture). Only enable a non-zero
+# value with ReduceLROnPlateau or as a tripwire for diverging hp-sweep runs.
 _C.CENTERDETECT.EARLY_STOP_PATIENCE = 0
 
 #EfficientTrack 2D Keypoint Tracking Network Configuration
@@ -57,6 +60,9 @@ _C.KEYPOINTDETECT.MAX_LEARNING_RATE = 0.003
 _C.KEYPOINTDETECT.NUM_EPOCHS = 100
 _C.KEYPOINTDETECT.CHECKPOINT_SAVE_INTERVAL = 10
 _C.KEYPOINTDETECT.VAL_INTERVAL = 1
+# Default 0 disables early stopping. Recommended with OneCycleLR: keep at 0
+# (best-model checkpointing handles overfit capture). Only enable a non-zero
+# value with ReduceLROnPlateau or as a tripwire for diverging hp-sweep runs.
 _C.KEYPOINTDETECT.EARLY_STOP_PATIENCE = 0
 
 _C.AUGMENTATION = CN()
@@ -100,4 +106,7 @@ _C.HYBRIDNET.MAX_LEARNING_RATE = 0.003
 _C.HYBRIDNET.NUM_EPOCHS = 30
 _C.HYBRIDNET.CHECKPOINT_SAVE_INTERVAL = 10
 _C.HYBRIDNET.VAL_INTERVAL = 1
+# Default 0 disables early stopping. Recommended with OneCycleLR: keep at 0
+# (best-model checkpointing handles overfit capture). Only enable a non-zero
+# value with ReduceLROnPlateau or as a tripwire for diverging hp-sweep runs.
 _C.HYBRIDNET.EARLY_STOP_PATIENCE = 0

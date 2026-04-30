@@ -320,8 +320,6 @@ class HybridNet:
 
             if epoch % self.cfg.HYBRIDNET.VAL_INTERVAL == 0:
                 self.model.eval()
-                avg_val_loss = 0
-                avg_val_acc = 0
                 for data in val_generator:
                     with torch.no_grad():
                         imgs = data[0].permute(0,1,4,2,3).float()
@@ -367,21 +365,20 @@ class HybridNet:
                         self.lossMeter.update(loss.item())
                         self.accuracyMeter.update(acc.item())
 
-            print(
-                'Val. Epoch: {}/{}. Loss: {:.3f}. Acc: {:.2f}'.format(
-                    epoch+1, num_epochs, self.lossMeter.read(),
-                    self.accuracyMeter.read()))
+                print(
+                    'Val. Epoch: {}/{}. Loss: {:.3f}. Acc: {:.2f}'.format(
+                        epoch+1, num_epochs, self.lossMeter.read(),
+                        self.accuracyMeter.read()))
 
-            latest_val_loss = self.lossMeter.read()
-            val_losses.append(latest_val_loss)
-            latest_val_acc = self.accuracyMeter.read()
-            val_accs.append(latest_val_acc)
-            self.logger.update_val_loss(self.lossMeter.read())
-            self.logger.update_val_accuracy(self.accuracyMeter.read())
-            self.lossMeter.reset()
-            self.accuracyMeter.reset()
+                latest_val_loss = self.lossMeter.read()
+                val_losses.append(latest_val_loss)
+                latest_val_acc = self.accuracyMeter.read()
+                val_accs.append(latest_val_acc)
+                self.logger.update_val_loss(self.lossMeter.read())
+                self.logger.update_val_accuracy(self.accuracyMeter.read())
+                self.lossMeter.reset()
+                self.accuracyMeter.reset()
 
-            if epoch % self.cfg.HYBRIDNET.VAL_INTERVAL == 0:
                 if latest_val_loss < best_val_loss:
                     best_val_loss = latest_val_loss
                     best_epoch = epoch + 1
@@ -399,7 +396,7 @@ class HybridNet:
                                 f'best loss {best_val_loss:.5f}).')
                     early_stopped = True
 
-            self.model.train()
+                self.model.train()
             if streamlitWidgets != None:
                 streamlitWidgets[0].progress(float(epoch+1)/float(num_epochs))
                 streamlitWidgets[2].markdown(f"Epoch {epoch+1}/{num_epochs}")
