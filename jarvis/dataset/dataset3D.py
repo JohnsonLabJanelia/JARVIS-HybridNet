@@ -325,7 +325,13 @@ class Dataset3D(BaseDataset):
             np.arange(heatmap_size),
         )
 
-        exponent = 1.7 / (float(2) / 2)
+        # exponent is sigma in heatmap-voxel units. 1 heatmap voxel spans
+        # grid_spacing * 2 mm, so physical sigma = exponent * grid_spacing * 2.
+        sigma_mm = getattr(self.cfg.HYBRIDNET, 'GT_SIGMA_MM', None)
+        if sigma_mm is not None:
+            exponent = sigma_mm / (grid_spacing * 2.0)
+        else:
+            exponent = 1.7
         for i in range(self.cfg.KEYPOINTDETECT.NUM_JOINTS):
             if (
                 keypoints3D[i][0] != 0
@@ -419,12 +425,95 @@ class Dataset3D(BaseDataset):
             * 4
         )
 
+        sigma_mm = self.estimate_label_noise_mm()
+
         suggested_parameters = {
             "bbox": final_bbox_suggestion,
             "resolution": resolution_suggestion,
+            "gt_sigma_mm": sigma_mm,
         }
 
         return suggested_parameters
+
+    def estimate_label_noise_mm(self, max_framesets=200, min_cameras=3):
+        """
+        Approximate 3D label noise (mm) via leave-one-out triangulation
+        across cameras. For each labeled keypoint with at least
+        ``min_cameras`` valid camera views, triangulates using all valid
+        cameras and again with each one held out; the median magnitude of
+        the resulting 3D shifts is returned as a sigma estimate.
+
+        Returns None if there is insufficient multi-camera labeled data.
+        """
+        framesets = list(self.dataset["framesets"].keys())
+        if len(framesets) == 0:
+            return None
+        if len(framesets) > max_framesets:
+            rng = np.random.default_rng(42)
+            framesets = list(
+                rng.choice(framesets, max_framesets, replace=False)
+            )
+
+        residuals = []
+        num_joints = self.cfg.KEYPOINTDETECT.NUM_JOINTS
+
+        for set_key in framesets:
+            frameset = self.dataset["framesets"][set_key]
+            if "frames" not in frameset:
+                continue
+            frame_ids = frameset["frames"]
+            if self.cameras_to_use is not None:
+                frame_ids = [frame_ids[i] for i in self.use_idxs]
+
+            keypoints_per_cam = []
+            for img_id in frame_ids:
+                try:
+                    _, kp = self._load_annotations(img_id, is_id=True)
+                    keypoints_per_cam.append(kp.reshape([-1, 3]))
+                except Exception:
+                    keypoints_per_cam.append(None)
+
+            repro_tool = self.reproTools[frameset["datasetName"]]
+            num_cameras = len(keypoints_per_cam)
+
+            for joint_idx in range(num_joints):
+                valid_cams = []
+                points2D = []
+                for cam_idx in range(num_cameras):
+                    kp = keypoints_per_cam[cam_idx]
+                    if kp is None:
+                        continue
+                    if kp[joint_idx][0] != 0 or kp[joint_idx][1] != 0:
+                        valid_cams.append(cam_idx)
+                        points2D.append(kp[joint_idx][:2])
+
+                if len(valid_cams) < min_cameras:
+                    continue
+
+                points2D = np.array(points2D)
+                try:
+                    p_full = np.asarray(repro_tool.reconstructPoint(
+                                points2D.transpose(), valid_cams))
+                except Exception:
+                    continue
+
+                for skip in range(len(valid_cams)):
+                    loo_cams = valid_cams[:skip] + valid_cams[skip + 1:]
+                    loo_points = np.delete(points2D, skip, axis=0)
+                    try:
+                        p_loo = np.asarray(repro_tool.reconstructPoint(
+                                    loo_points.transpose(), loo_cams))
+                    except Exception:
+                        continue
+                    residuals.append(float(np.linalg.norm(p_full - p_loo)))
+
+        if len(residuals) < 30:
+            return None
+
+        # Median LOO residual is a robust order-of-magnitude estimate of
+        # per-keypoint label noise in 3D mm. Approximate; users should
+        # treat it as a starting suggestion.
+        return float(np.median(residuals))
 
 
 class Normalizer(object):

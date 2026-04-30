@@ -225,6 +225,18 @@ class ProjectManager:
                     max_value=1024,
                     step=1,
                 )
+                sigma_default = suggestions.get("gt_sigma_mm")
+                if sigma_default is None:
+                    sigma_default = max(1.0, 0.05 * suggestions["bbox"])
+                gt_sigma_mm = st.number_input(
+                    "GT Gaussian sigma (mm) — auto-estimated from "
+                    "triangulation residuals; ~15-25% of target size is "
+                    "a good rule of thumb. Set to 0 to keep legacy "
+                    "behavior.",
+                    value=float(sigma_default),
+                    min_value=0.0,
+                    step=0.5,
+                )
             submitted2 = st.form_submit_button("Confirm")
         if submitted2:
             if bbox_size % 64 != 0:
@@ -252,6 +264,9 @@ class ProjectManager:
                 self.cfg.HYBRIDNET.ROI_CUBE_SIZE = bbox_size_3D
                 self.cfg.HYBRIDNET.GRID_SPACING = grid_spacing
                 self.cfg.HYBRIDNET.NUM_CAMERAS = dataset3D.num_cameras
+                self.cfg.HYBRIDNET.GT_SIGMA_MM = (
+                    None if gt_sigma_mm == 0 else float(gt_sigma_mm)
+                )
             self.cfg.logPaths = CN()
             self.cfg.savePaths = CN()
             for module in ["CenterDetect", "KeypointDetect", "HybridNet"]:
@@ -382,9 +397,53 @@ class ProjectManager:
             q, suggestion_bbox, resolution * 4
         )
 
+        sigma_suggestion = suggestions.get("gt_sigma_mm")
+        sigma_mm = self._prompt_gt_sigma(sigma_suggestion, bbox_size)
+
         self.cfg.HYBRIDNET.ROI_CUBE_SIZE = bbox_size
         self.cfg.HYBRIDNET.GRID_SPACING = resolution
         self.cfg.HYBRIDNET.NUM_CAMERAS = dataset3D.num_cameras
+        self.cfg.HYBRIDNET.GT_SIGMA_MM = sigma_mm
+
+    def _prompt_gt_sigma(self, sigma_suggestion, bbox_size):
+        """
+        Prompt the user for the GT Gaussian sigma (mm). If the auto-estimate
+        from leave-one-out triangulation is unavailable, falls back to a
+        bbox-fraction heuristic. Returns None to keep the legacy behavior.
+        """
+        if sigma_suggestion is None:
+            sigma_suggestion = max(1.0, 0.05 * bbox_size)
+            print(
+                f"GT Gaussian sigma: could not auto-estimate from labels; "
+                f"using heuristic {sigma_suggestion:.1f} mm "
+                f"(5% of cube size). Type 'legacy' to keep the old "
+                f"voxel-coupled default."
+            )
+        else:
+            print(
+                f"GT Gaussian sigma: estimated {sigma_suggestion:.2f} mm "
+                f"from triangulation residuals. Use this? (yes/no/legacy)"
+            )
+        valid_accepts = ["yes", "Yes", "y", "Y", ""]
+        valid_declines = ["no", "No", "n", "N"]
+        while True:
+            ans = input()
+            if ans.strip().lower() == "legacy":
+                return None
+            if ans in valid_accepts:
+                return float(sigma_suggestion)
+            if ans in valid_declines:
+                print("Enter custom GT sigma in mm (e.g. 5.0):")
+                while True:
+                    raw = input()
+                    try:
+                        val = float(raw)
+                        if val > 0:
+                            return val
+                    except ValueError:
+                        pass
+                    print("Please enter a positive number.")
+            print("Please enter yes / no / legacy.")
 
     def _init_config(self, name):
         config_path = os.path.join(

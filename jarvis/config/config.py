@@ -98,6 +98,11 @@ _C.HYBRIDNET.NUM_CAMERAS = 0
 _C.HYBRIDNET.ROI_CUBE_SIZE = None
 _C.HYBRIDNET.GRID_SPACING = None
 _C.HYBRIDNET.V2V_BASE_WIDTH = None
+# 3D GT Gaussian sigma in physical mm. None preserves legacy behavior
+# (sigma = 1.7 voxels = 1.7 * GRID_SPACING * 2 mm — implicitly couples to grid).
+# Set to a positive float to decouple sigma from GRID_SPACING. Pick ~15-25%
+# of target physical size, or measure from re-annotation noise.
+_C.HYBRIDNET.GT_SIGMA_MM = None
 _C.HYBRIDNET.USE_ONECYLCLE = True
 _C.HYBRIDNET.BATCH_SIZE = 1
 _C.HYBRIDNET.OPTIMIZER = 'adamw'
