@@ -211,20 +211,6 @@ class ProjectManager:
                 step=64,
             )
             if dataset3D_path != None:
-                bbox_size_3D = st.number_input(
-                    "3D tracking Volume size "
-                    "(has to be divisible by 4*grid_spacing):",
-                    value=suggestions["bbox"],
-                    min_value=4,
-                    step=4,
-                )
-                grid_spacing = st.number_input(
-                    "Grid spacing:",
-                    value=suggestions["resolution"],
-                    min_value=1,
-                    max_value=1024,
-                    step=1,
-                )
                 sigma_default = suggestions.get("gt_sigma_mm")
                 if sigma_default is None:
                     sigma_default = max(1.0, 0.05 * suggestions["bbox"])
@@ -236,6 +222,27 @@ class ProjectManager:
                     value=float(sigma_default),
                     min_value=0.0,
                     step=0.5,
+                )
+                # Couple grid suggestion to sigma (sigma_voxels ~= 1.5).
+                if gt_sigma_mm > 0:
+                    grid_from_sigma = max(1, int(round(gt_sigma_mm / 3.0)))
+                else:
+                    grid_from_sigma = 1
+                grid_from_bbox = max(1, suggestions["resolution"])
+                grid_default = max(grid_from_sigma, grid_from_bbox)
+                grid_spacing = st.number_input(
+                    "Grid spacing:",
+                    value=grid_default,
+                    min_value=1,
+                    max_value=1024,
+                    step=1,
+                )
+                bbox_size_3D = st.number_input(
+                    "3D tracking Volume size "
+                    "(has to be divisible by 4*grid_spacing):",
+                    value=suggestions["bbox"],
+                    min_value=4,
+                    step=4,
                 )
             submitted2 = st.form_submit_button("Confirm")
         if submitted2:
@@ -374,13 +381,27 @@ class ProjectManager:
         dataset3D = Dataset3D(self.cfg, set="train")
         suggestions = dataset3D.get_dataset_config()
         bbox_size = suggestions["bbox"]
-        resolution_suggestion = int(np.round((bbox_size / 85.0)))
+
+        # Ask sigma first — it informs the grid choice.
+        sigma_suggestion = suggestions.get("gt_sigma_mm")
+        sigma_mm = self._prompt_gt_sigma(sigma_suggestion, bbox_size)
+
+        # Suggest grid spacing coupled to sigma. Target sigma_voxels ~= 1.5
+        # (each heatmap voxel spans grid_spacing*2 mm, so this gives a
+        # well-resolved Gaussian peak). Floor by the legacy bbox-based
+        # heuristic so very small-sigma datasets don't get sub-mm grids.
+        if sigma_mm is not None and sigma_mm > 0:
+            grid_from_sigma = max(1, int(np.round(sigma_mm / 3.0)))
+        else:
+            grid_from_sigma = 1
+        grid_from_bbox = max(1, int(np.round(bbox_size / 85.0)))
+        resolution_suggestion = max(grid_from_sigma, grid_from_bbox)
+
         print(
             f"Use suggested grid spacing of {resolution_suggestion} "
             "mm? (yes/no)"
         )
         q = "Enter custom grid spacing:"
-        resolution = resolution_suggestion
         resolution = self._get_number_from_user(
             q, resolution_suggestion, bounds=[0, 10]
         )
@@ -397,9 +418,6 @@ class ProjectManager:
             q, suggestion_bbox, resolution * 4
         )
 
-        sigma_suggestion = suggestions.get("gt_sigma_mm")
-        sigma_mm = self._prompt_gt_sigma(sigma_suggestion, bbox_size)
-
         self.cfg.HYBRIDNET.ROI_CUBE_SIZE = bbox_size
         self.cfg.HYBRIDNET.GRID_SPACING = resolution
         self.cfg.HYBRIDNET.NUM_CAMERAS = dataset3D.num_cameras
@@ -414,15 +432,17 @@ class ProjectManager:
         if sigma_suggestion is None:
             sigma_suggestion = max(1.0, 0.05 * bbox_size)
             print(
-                f"GT Gaussian sigma: could not auto-estimate from labels; "
-                f"using heuristic {sigma_suggestion:.1f} mm "
-                f"(5% of cube size). Type 'legacy' to keep the old "
-                f"voxel-coupled default."
+                f"GT Gaussian sigma: heuristic suggestion "
+                f"{sigma_suggestion:.1f} mm (5% of cube size). Use this? "
+                f"(yes/no/legacy — 'legacy' keeps the old voxel-coupled "
+                f"default.)"
             )
         else:
             print(
-                f"GT Gaussian sigma: estimated {sigma_suggestion:.2f} mm "
-                f"from triangulation residuals. Use this? (yes/no/legacy)"
+                f"GT Gaussian sigma: heuristic suggestion "
+                f"{sigma_suggestion:.2f} mm (10% of cube size; pick "
+                f"~15-25% of physical target size if you know it). "
+                f"Use this? (yes/no/legacy)"
             )
         valid_accepts = ["yes", "Yes", "y", "Y", ""]
         valid_declines = ["no", "No", "n", "N"]
