@@ -246,16 +246,25 @@ class ProjectManager:
                 )
             submitted2 = st.form_submit_button("Confirm")
         if submitted2:
+            # Auto-round bboxes up to satisfy divisibility, since the form
+            # widgets don't re-render their defaults when the user changes
+            # grid_spacing. Rounding up preserves the data's extent.
             if bbox_size % 64 != 0:
-                st.error("2D bounding box size has to be divisible by 64.")
-                return
+                bbox_size = int(np.ceil(bbox_size / 64.0)) * 64
+                st.info(
+                    f"2D bounding box size rounded up to {bbox_size} "
+                    f"(next multiple of 64)."
+                )
             if dataset3D_path != None:
-                if bbox_size_3D % 4 * grid_spacing != 0:
-                    st.error(
-                        "3D bounding box size has to be divisible by "
-                        "4*grid_spacing."
+                if bbox_size_3D % (4 * grid_spacing) != 0:
+                    divisor = 4 * grid_spacing
+                    bbox_size_3D = (
+                        int(np.ceil(bbox_size_3D / divisor)) * divisor
                     )
-                    return
+                    st.info(
+                        f"3D bounding box size rounded up to "
+                        f"{bbox_size_3D} (next multiple of {divisor})."
+                    )
                 if grid_spacing > bbox_size_3D:
                     st.error(
                         "Grid spacing can not be bigger than " "bounding box."
@@ -405,7 +414,12 @@ class ProjectManager:
         resolution = self._get_number_from_user(
             q, resolution_suggestion, bounds=[0, 10]
         )
-        suggestion_bbox = int(bbox_size / (resolution * 4)) * resolution * 4
+        # Round UP to the next multiple of 4*resolution, matching the
+        # behavior of get_dataset_config(). Rounding down here can shrink
+        # the bbox below the data's extent if bbox isn't already divisible.
+        suggestion_bbox = (
+            int(np.ceil(bbox_size / (resolution * 4))) * resolution * 4
+        )
         print(
             f"Use suggested 3D Bounding Box size of {suggestion_bbox} "
             "mm? (yes/no)"
