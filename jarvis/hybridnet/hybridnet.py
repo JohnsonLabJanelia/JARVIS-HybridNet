@@ -140,11 +140,16 @@ class HybridNet:
         dirs.sort(key=lambda x: os.path.getmtime(x))
         dirs.reverse()
         for weights_dir in dirs:
-            weigths_path = os.path.join(weights_dir,
+            best_path = os.path.join(weights_dir,
+                        f'HybridNet-{self.cfg.KEYPOINTDETECT.MODEL_SIZE}'
+                        f'_best.pth')
+            if os.path.isfile(best_path):
+                return best_path
+            final_path = os.path.join(weights_dir,
                         f'HybridNet-{self.cfg.KEYPOINTDETECT.MODEL_SIZE}'
                         f'_final.pth')
-            if os.path.isfile(weigths_path):
-                return weigths_path
+            if os.path.isfile(final_path):
+                return final_path
         return None
 
 
@@ -219,6 +224,12 @@ class HybridNet:
                             'dataset size differs from the saved run. '
                             'Continuing with a fresh schedule.')
         start_epoch = max(start_epoch, getattr(self, '_resume_epoch', 0))
+
+        best_val_loss = float('inf')
+        best_epoch = -1
+        stale_val_epochs = 0
+        patience = getattr(self.cfg.HYBRIDNET, 'EARLY_STOP_PATIENCE', 0)
+        early_stopped = False
 
         for epoch in range(start_epoch, num_epochs):
             progress_bar = tqdm(training_generator)
@@ -369,6 +380,25 @@ class HybridNet:
             self.logger.update_val_accuracy(self.accuracyMeter.read())
             self.lossMeter.reset()
             self.accuracyMeter.reset()
+
+            if epoch % self.cfg.HYBRIDNET.VAL_INTERVAL == 0:
+                if latest_val_loss < best_val_loss:
+                    best_val_loss = latest_val_loss
+                    best_epoch = epoch + 1
+                    self.save_checkpoint(f'HybridNet-'
+                                f'{self.cfg.KEYPOINTDETECT.MODEL_SIZE}'
+                                f'_best.pth',
+                                epoch=epoch + 1)
+                    stale_val_epochs = 0
+                else:
+                    stale_val_epochs += 1
+                if patience and stale_val_epochs >= patience:
+                    clp.info(f'Early stopping at epoch {epoch+1}: no val '
+                                f'improvement for {patience} val intervals '
+                                f'(best epoch {best_epoch}, '
+                                f'best loss {best_val_loss:.5f}).')
+                    early_stopped = True
+
             self.model.train()
             if streamlitWidgets != None:
                 streamlitWidgets[0].progress(float(epoch+1)/float(num_epochs))
@@ -386,6 +416,12 @@ class HybridNet:
                 st.session_state['HybridNet/' + self.training_mode
                             + '/Val Accuracy'] = val_accs
                 st.session_state['results_available'] = True
+
+            if early_stopped:
+                self.save_checkpoint(f'HybridNet-'
+                            f'{self.cfg.KEYPOINTDETECT.MODEL_SIZE}_final.pth',
+                            epoch=epoch + 1)
+                break
 
         final_results = {'train_loss': latest_train_loss,
                          'train_acc': latest_train_acc,

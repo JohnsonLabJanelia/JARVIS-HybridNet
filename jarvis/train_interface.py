@@ -45,11 +45,16 @@ def get_latest_weights_efficienttrack(cfg, mode):
     dirs.sort(key=lambda x: os.path.getmtime(x))
     dirs.reverse()
     for weights_dir in dirs:
-        weigths_path = os.path.join(weights_dir,
+        best_path = os.path.join(weights_dir,
+                    f'EfficientTrack-{cfg.KEYPOINTDETECT.MODEL_SIZE}'
+                    f'_best.pth')
+        if os.path.isfile(best_path):
+            return best_path
+        final_path = os.path.join(weights_dir,
                     f'EfficientTrack-{cfg.KEYPOINTDETECT.MODEL_SIZE}'
                     f'_final.pth')
-        if os.path.isfile(weigths_path):
-            return weigths_path
+        if os.path.isfile(final_path):
+            return final_path
     return None
 
 

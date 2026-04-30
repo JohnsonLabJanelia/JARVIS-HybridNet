@@ -196,10 +196,14 @@ class EfficientTrack:
         dirs.sort(key=lambda x: os.path.getmtime(x))
         dirs.reverse()
         for weights_dir in dirs:
-            weigths_path = os.path.join(weights_dir,
+            best_path = os.path.join(weights_dir,
+                        f'EfficientTrack-{self.cfg.MODEL_SIZE}_best.pth')
+            if os.path.isfile(best_path):
+                return best_path
+            final_path = os.path.join(weights_dir,
                         f'EfficientTrack-{self.cfg.MODEL_SIZE}_final.pth')
-            if os.path.isfile(weigths_path):
-                return weigths_path
+            if os.path.isfile(final_path):
+                return final_path
         return None
 
 
@@ -285,6 +289,12 @@ class EfficientTrack:
         if streamlitWidgets != None:
             streamlitWidgets[2].markdown(
                         f"Epoch {start_epoch + 1}/{num_epochs}")
+
+        best_val_loss = float('inf')
+        best_epoch = -1
+        stale_val_epochs = 0
+        patience = getattr(self.cfg, 'EARLY_STOP_PATIENCE', 0)
+        early_stopped = False
 
         for epoch in range(start_epoch, num_epochs):
             progress_bar = tqdm(training_generator)
@@ -395,6 +405,22 @@ class EfficientTrack:
                 self.lossMeter.reset()
                 self.accuracyMeter.reset()
 
+                if latest_val_loss < best_val_loss:
+                    best_val_loss = latest_val_loss
+                    best_epoch = epoch + 1
+                    self.save_checkpoint(f'EfficientTrack-'
+                                f'{self.cfg.MODEL_SIZE}_best.pth',
+                                epoch=epoch + 1)
+                    stale_val_epochs = 0
+                else:
+                    stale_val_epochs += 1
+                if patience and stale_val_epochs >= patience:
+                    clp.info(f'Early stopping at epoch {epoch+1}: no val '
+                                f'improvement for {patience} val intervals '
+                                f'(best epoch {best_epoch}, '
+                                f'best loss {best_val_loss:.5f}).')
+                    early_stopped = True
+
                 self.model.train()
                 if streamlitWidgets != None:
                     streamlitWidgets[0].progress(float(epoch + 1)
@@ -410,6 +436,12 @@ class EfficientTrack:
                     st.session_state[self.mode+'/'+'Val Loss'] = val_losses
                     st.session_state[self.mode+'/'+'Val Accuracy'] = val_accs
                     st.session_state['results_available'] = True
+
+            if early_stopped:
+                self.save_checkpoint(f'EfficientTrack-'
+                            f'{self.cfg.MODEL_SIZE}_final.pth',
+                            epoch=epoch + 1)
+                break
 
 
         final_results = {'train_loss': latest_train_loss,

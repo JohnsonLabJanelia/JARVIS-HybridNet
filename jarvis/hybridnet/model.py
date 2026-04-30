@@ -40,7 +40,9 @@ class HybridNetBackbone(nn.Module):
 
         #self.drop_joint = self.drop_joint = nn.Dropout3d(p=0.1)
         self.v2vNet = V2VNet(cfg.KEYPOINTDETECT.NUM_JOINTS,
-                             cfg.KEYPOINTDETECT.NUM_JOINTS)
+                             cfg.KEYPOINTDETECT.NUM_JOINTS,
+                             base_width=getattr(cfg.HYBRIDNET,
+                                                'V2V_BASE_WIDTH', None))
 
 
         self.softplus = nn.Softplus()
