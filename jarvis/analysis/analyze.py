@@ -19,20 +19,32 @@ from jarvis.prediction.jarvis3D import JarvisPredictor3D
 from torch.utils.data import DataLoader
 
 
-def analyze_validation_data(project_name, weights_center = 'latest',
+def analyze_data(project_name, set = 'val', weights_center = 'latest',
             weights_hybridnet = 'latest', cameras_to_use = None,
             progress_bar = None):
+    """Run JarvisPredictor3D on every sample in the given dataset split and
+    save the predicted 3D points, ground-truth points, per-keypoint confidence,
+    and frame names to a timestamped folder under ``<project>/analysis/``.
+
+    Parameters
+    ----------
+    set : str
+        Which split to evaluate on. ``'val'`` mirrors the legacy behavior.
+        ``'test'`` evaluates on ``instances_test.json`` + ``test/`` (must be
+        present in the dataset folder; produced by red3d2jarvis.py with
+        ``--test_ratio > 0``).
+    """
     project = ProjectManager()
     project.load(project_name)
     cfg = project.get_cfg()
 
     output_dir = os.path.join(project.parent_dir,
                 project.cfg.PROJECTS_ROOT_PATH, project_name,
-                'analysis', f'Validation_Predictions_'
+                'analysis', f'{set.capitalize()}_Predictions_'
                 f'{time.strftime("%Y%m%d-%H%M%S")}')
     os.makedirs(output_dir)
 
-    dataset = Dataset3D(cfg = cfg, set='val', analysisMode = True,
+    dataset = Dataset3D(cfg = cfg, set=set, analysisMode = True,
                 cameras_to_use = cameras_to_use)
 
     jarvisPredictor = JarvisPredictor3D(project.cfg, weights_center,
@@ -42,6 +54,7 @@ def analyze_validation_data(project_name, weights_center = 'latest',
 
     pointsNet = []
     pointsGT = []
+    confidencesNet = []
     filenames = []
     data_generator = DataLoader(
                 dataset,
@@ -65,7 +78,7 @@ def analyze_validation_data(project_name, weights_center = 'latest',
 
         imgs = imgs_orig.cuda().float().permute(0,3,1,2)
 
-        points3D_net, _ = jarvisPredictor(imgs,
+        points3D_net, confidences_net = jarvisPredictor(imgs,
                     reproTool.cameraMatrices.cuda(),
                     reproTool.intrinsicMatrices.cuda(),
                     reproTool.distortionCoefficients.cuda())
@@ -74,9 +87,12 @@ def analyze_validation_data(project_name, weights_center = 'latest',
             points3D_net = points3D_net[0].cpu().detach().numpy()
             pointsNet.append(points3D_net)
             pointsGT.append(keypoints3D)
+            if confidences_net is not None:
+                confidencesNet.append(
+                            confidences_net[0].cpu().detach().numpy())
             filenames.append(file_name)
 
-    print (f'{CLIColors.OKGREEN}Successfully analysed all validation '
+    print (f'{CLIColors.OKGREEN}Successfully analysed all {set} '
                 f'frames!{CLIColors.ENDC}')
     if len(pointsNet) != len(dataset.image_ids):
         print (f'{CLIColors.WARNING}Network could not detect instance in '
@@ -94,3 +110,30 @@ def analyze_validation_data(project_name, weights_center = 'latest',
     savetxt(os.path.join(output_dir, 'points_GroundTruth.csv'),
                 np.array(pointsGT).reshape(
                 (-1, project.cfg.KEYPOINTDETECT.NUM_JOINTS*3)), delimiter=',')
+    if len(confidencesNet) > 0:
+        savetxt(os.path.join(output_dir, 'points_HybridNet_confidence.csv'),
+                    np.array(confidencesNet).reshape(
+                    (-1, project.cfg.KEYPOINTDETECT.NUM_JOINTS)),
+                    delimiter=',')
+
+
+def analyze_validation_data(project_name, weights_center = 'latest',
+            weights_hybridnet = 'latest', cameras_to_use = None,
+            progress_bar = None):
+    """Backward-compatible wrapper around :func:`analyze_data` for set='val'."""
+    return analyze_data(project_name, set='val',
+                weights_center = weights_center,
+                weights_hybridnet = weights_hybridnet,
+                cameras_to_use = cameras_to_use,
+                progress_bar = progress_bar)
+
+
+def analyze_test_data(project_name, weights_center = 'latest',
+            weights_hybridnet = 'latest', cameras_to_use = None,
+            progress_bar = None):
+    """Run analysis on the held-out test split (``instances_test.json``)."""
+    return analyze_data(project_name, set='test',
+                weights_center = weights_center,
+                weights_hybridnet = weights_hybridnet,
+                cameras_to_use = cameras_to_use,
+                progress_bar = progress_bar)

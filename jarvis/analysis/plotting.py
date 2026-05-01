@@ -14,9 +14,16 @@ import pandas as pd
 from jarvis.config.project_manager import ProjectManager
 
 
+def _load_confidence(path):
+    """Load `points_HybridNet_confidence.csv` if present, shape [N, K]."""
+    conf_path = os.path.join(path, 'points_HybridNet_confidence.csv')
+    if not os.path.exists(conf_path):
+        return None
+    return np.genfromtxt(conf_path, delimiter=',')
+
 
 def plot_error_histogram(path, additional_data = {}, cutoff = -1,
-            interactive = True):
+            min_confidence = None, interactive = True):
     gt_path = os.path.join(path, 'points_GroundTruth.csv')
     net_path = os.path.join(path, 'points_HybridNet.csv')
 
@@ -28,6 +35,8 @@ def plot_error_histogram(path, additional_data = {}, cutoff = -1,
     pointsGT = pointsGT.reshape(-1,int(pointsGT.shape[1]/3), 3)
     pointsNet = np.genfromtxt(net_path, delimiter=',')
     pointsNet = pointsNet.reshape(-1,int(pointsNet.shape[1]/3), 3)
+
+    confidence = _load_confidence(path) if min_confidence is not None else None
 
     pointsList = [pointsNet]
     labels = ["JARVIS"]
@@ -41,12 +50,19 @@ def plot_error_histogram(path, additional_data = {}, cutoff = -1,
     f, (ax_hist, ax_box) = plt.subplots(2, sharex=True,
                 gridspec_kw= {"height_ratios": (1, 0.2)},
                 figsize=(6.92913,6.92913 / 1.618))
-    plt.suptitle("Euclidean Distance to Ground Truth across all joints")
+    title = "Euclidean Distance to Ground Truth across all joints"
+    if min_confidence is not None and confidence is not None:
+        title += f" (confidence ≥ {min_confidence})"
+    plt.suptitle(title)
     distances_l = {}
     for i,points in enumerate(pointsList):
         distances = np.sqrt(np.sum((points-pointsGT)**2, axis = 2))
         mask = np.sum(pointsGT,axis = 2)
-        distances = distances[mask != 0]
+        keep = (mask != 0)
+        # Confidence filter only applies to the JARVIS prediction (i == 0).
+        if i == 0 and min_confidence is not None and confidence is not None:
+            keep = keep & (confidence >= min_confidence)
+        distances = distances[keep]
 
         if cutoff != -1:
             distances[distances>cutoff] = cutoff
@@ -77,7 +93,8 @@ def plot_error_histogram(path, additional_data = {}, cutoff = -1,
     return f
 
 
-def plot_error_per_keypoint(path, project_name, interactive = True):
+def plot_error_per_keypoint(path, project_name, min_confidence = None,
+            interactive = True):
     sns.set_theme()
     sns.set_style("whitegrid", {'axes.grid' : False})
     sns.set_context("paper", font_scale=1.25)
@@ -90,7 +107,10 @@ def plot_error_per_keypoint(path, project_name, interactive = True):
 
     plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.3)
     plt.ylabel("Mean Deviation from manual annotations [mm]")
-    plt.suptitle("Euclidean Distance to Ground Truth per Joint")
+    title = "Euclidean Distance to Ground Truth per Joint"
+    if min_confidence is not None:
+        title += f" (confidence ≥ {min_confidence})"
+    plt.suptitle(title)
 
     gt_path = os.path.join(path, 'points_GroundTruth.csv')
     net_path = os.path.join(path, 'points_HybridNet.csv')
@@ -104,11 +124,15 @@ def plot_error_per_keypoint(path, project_name, interactive = True):
     pointsNet = np.genfromtxt(net_path, delimiter=',')
     pointsNet = pointsNet.reshape(-1,int(pointsNet.shape[1]/3), 3)
     number_joints = pointsNet.shape[1]
+    confidence = _load_confidence(path) if min_confidence is not None else None
 
     distances = np.sqrt(np.sum((pointsNet-pointsGT)**2, axis = 2))
     mask = np.sum(pointsGT,axis = 2)
     mask[mask == 0] = 1
     mask[mask != 1] = 0
+    if min_confidence is not None and confidence is not None:
+        # Mask out low-confidence keypoints (mask = 1 means "ignore" here)
+        mask = np.where(confidence < min_confidence, 1, mask)
     distances = np.ma.array(distances, mask=mask)
     joints_means = np.ma.mean(distances, axis = 0)
 
@@ -130,7 +154,7 @@ def plot_error_per_keypoint(path, project_name, interactive = True):
 
 
 def plot_error_histogram_per_keypoint(path, project_name, cutoff = -1,
-            interactive = True):
+            min_confidence = None, interactive = True):
     sns.set_theme()
     sns.set_style("whitegrid", {'axes.grid' : False})
     sns.set_context("paper", font_scale=1.25)
@@ -163,13 +187,17 @@ def plot_error_histogram_per_keypoint(path, project_name, cutoff = -1,
     pointsGT = pointsGT.reshape(-1,int(pointsGT.shape[1]/3), 3)
     pointsNet = np.genfromtxt(net_path, delimiter=',')
     pointsNet = pointsNet.reshape(-1,int(pointsNet.shape[1]/3), 3)
+    confidence = _load_confidence(path) if min_confidence is not None else None
 
     for keypoint in range(len(cfg.KEYPOINT_NAMES)):
         distances_l = {}
         distances = np.sqrt(np.sum(
                     (pointsNet[:,keypoint]-pointsGT[:,keypoint])**2, axis = 1))
         mask = np.sum(pointsGT[:,keypoint],axis = 1)
-        distances = distances[mask != 0]
+        keep = (mask != 0)
+        if min_confidence is not None and confidence is not None:
+            keep = keep & (confidence[:, keypoint] >= min_confidence)
+        distances = distances[keep]
         if cutoff != -1:
             distances[distances>cutoff] = cutoff
         distances_l[cfg.KEYPOINT_NAMES[keypoint]] = (distances.reshape(-1))

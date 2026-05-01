@@ -41,6 +41,25 @@ def analyze_validation_data(project_name, weights_center_detect,
                 weights_hybridnet, None)
 
 
+@click.command()
+@click.option('--weights_center_detect', default = 'latest',
+            help = 'CenterDetect weights to load for prediction. You have to '
+            'specify the path to a specific \'.pth\' file')
+@click.option('--weights_hybridnet', default = 'latest',
+            help = 'HybridNet weights to load for prediction. You have to '
+            'specify the path to a specific \'.pth\' file')
+@click.argument('project_name')
+def analyze_test_data(project_name, weights_center_detect, weights_hybridnet):
+    """
+    Analyse the held-out test data of your projects dataset.
+
+    Requires instances_test.json and a test/ folder in the dataset root
+    (produced by red3d2jarvis.py with --test_ratio > 0).
+    """
+    analyze.analyze_test_data(project_name, weights_center_detect,
+                weights_hybridnet, None)
+
+
 
 
 @click.command()
@@ -50,11 +69,15 @@ def analyze_validation_data(project_name, weights_center_detect,
 @click.option('--cutoff', default = -1,
             help = 'Maximum error value to plot. Values bigger than the cutoff '
             'will be added to the last bin')
+@click.option('--min_confidence', default = None, type = float,
+            help = 'If set, only include predicted keypoints with confidence '
+            '>= this threshold. Requires points_HybridNet_confidence.csv.')
 @click.option('--mode', default = 'interactive',
             help = "'interactive' shows the interactive pyplot window, "
             "'headless' only saves plot do disk")
 @click.argument('project_name')
-def plot_error_histogram(project_name, analysis_path, cutoff, mode):
+def plot_error_histogram(project_name, analysis_path, cutoff, min_confidence,
+            mode):
     """
     Euclidean error across keypoints and time.
     """
@@ -71,18 +94,21 @@ def plot_error_histogram(project_name, analysis_path, cutoff, mode):
     else:
         interactive = False
     plotting.plot_error_histogram(analysis_path, {}, cutoff,
-                interactive = interactive)
+                min_confidence = min_confidence, interactive = interactive)
 
 
 @click.command()
 @click.option('--analysis_path', default = 'latest',
             help = 'Name of the directory containing the analysis csvs you '
             'want to use.')
+@click.option('--min_confidence', default = None, type = float,
+            help = 'If set, only include predicted keypoints with confidence '
+            '>= this threshold. Requires points_HybridNet_confidence.csv.')
 @click.option('--mode', default = 'interactive',
             help = "'interactive' shows the interactive pyplot window, "
             "'headless' only saves plot do disk")
 @click.argument('project_name')
-def plot_error_per_keypoint(project_name, analysis_path, mode):
+def plot_error_per_keypoint(project_name, analysis_path, min_confidence, mode):
     """
     Euclidean error for each keypoint.
     """
@@ -97,7 +123,7 @@ def plot_error_per_keypoint(project_name, analysis_path, mode):
     else:
         interactive = False
     plotting.plot_error_per_keypoint(analysis_path, project_name,
-                interactive = interactive)
+                min_confidence = min_confidence, interactive = interactive)
 
 
 @click.command()
@@ -107,12 +133,15 @@ def plot_error_per_keypoint(project_name, analysis_path, mode):
 @click.option('--cutoff', default = -1,
             help = 'Maximum error value to plot. Values bigger than the cutoff '
             'will be added to the last bin')
+@click.option('--min_confidence', default = None, type = float,
+            help = 'If set, only include predicted keypoints with confidence '
+            '>= this threshold. Requires points_HybridNet_confidence.csv.')
 @click.option('--mode', default = 'interactive',
             help = "'interactive' shows the interactive pyplot window, "
             "'headless' only saves plot do disk")
 @click.argument('project_name')
 def plot_error_histogram_per_keypoint(project_name, analysis_path, cutoff,
-        mode):
+        min_confidence, mode):
     """
     Histogram of euclidean error for each keypoint.
     """
@@ -127,4 +156,5 @@ def plot_error_histogram_per_keypoint(project_name, analysis_path, cutoff,
     else:
         interactive = False
     plotting.plot_error_histogram_per_keypoint(analysis_path, project_name,
-                cutoff, interactive = interactive)
+                cutoff, min_confidence = min_confidence,
+                interactive = interactive)
