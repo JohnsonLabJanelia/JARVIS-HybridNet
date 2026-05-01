@@ -384,6 +384,9 @@ class ProjectManager:
 
         self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE = bbox_size
         self.cfg.KEYPOINTDETECT.NUM_JOINTS = dataset2D.num_keypoints[0]
+        # Default eval cadence — emit val metrics every 5 epochs.
+        self.cfg.CENTERDETECT.VAL_INTERVAL = 5
+        self.cfg.KEYPOINTDETECT.VAL_INTERVAL = 5
 
     def _init_dataset3D(self):
         print("HybridNet 3D Configuration:")
@@ -436,6 +439,11 @@ class ProjectManager:
         self.cfg.HYBRIDNET.GRID_SPACING = resolution
         self.cfg.HYBRIDNET.NUM_CAMERAS = dataset3D.num_cameras
         self.cfg.HYBRIDNET.GT_SIGMA_MM = sigma_mm
+        # Tiny batch (1) at high LR (default 0.003) destabilizes HybridNet
+        # training. Drop to 0.001 by default.
+        self.cfg.HYBRIDNET.MAX_LEARNING_RATE = 0.001
+        self.cfg.HYBRIDNET.VAL_INTERVAL = 5
+        self.cfg.HYBRIDNET.NUM_EPOCHS = 100
 
     def _prompt_gt_sigma(self, sigma_suggestion, bbox_size):
         """

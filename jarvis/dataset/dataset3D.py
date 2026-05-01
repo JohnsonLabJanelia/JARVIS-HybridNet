@@ -79,6 +79,9 @@ class Dataset3D(BaseDataset):
         self.image_ids = []
         self.keypoints3D = []
         cfg.KEYPOINTDETECT.NUM_JOINTS = self.num_keypoints[0]
+        # Track frames excluded because their 3D extent doesn't fit in
+        # ROI_CUBE_SIZE — silent drops are a common footgun otherwise.
+        self._dropped_extents = []
 
         if self.cameras_to_use != None:
             all_camera_names = [
@@ -166,8 +169,22 @@ class Dataset3D(BaseDataset):
                     self.dataset["framesets"][set]["frames"][0]
                 )
                 self.keypoints3D.append(keypoints3D_cam)
-            # else:
-            #      print (min_cube_size)
+            elif len(keypoints3D_bb) >= 1:
+                # Frame had labels but its 3D extent exceeded ROI_CUBE_SIZE.
+                self._dropped_extents.append(float(min_cube_size))
+
+        if self._dropped_extents:
+            n_dropped = len(self._dropped_extents)
+            n_total = n_dropped + len(self.image_ids)
+            largest = max(self._dropped_extents)
+            print(
+                f"WARNING: {n_dropped}/{n_total} {self.set_name} frames "
+                f"dropped because 3D extent > HYBRIDNET.ROI_CUBE_SIZE "
+                f"({self.cfg.HYBRIDNET.ROI_CUBE_SIZE} mm). "
+                f"Largest dropped extent: {largest:.0f} mm. "
+                f"Increase ROI_CUBE_SIZE (and keep it divisible by "
+                f"4 * GRID_SPACING) to include these frames."
+            )
 
         self.transform = transforms.Compose(
             [Normalizer(mean=cfg.DATASET.MEAN, std=cfg.DATASET.STD)]
