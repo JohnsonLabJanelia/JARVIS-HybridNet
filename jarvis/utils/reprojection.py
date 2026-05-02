@@ -12,6 +12,8 @@ import cv2
 import torch
 import torch.nn as nn
 
+from jarvis.utils.utils import CLIColors
+
 
 class ReprojectionTool(nn.Module):
     def __init__(self, root_dir = None, calib_paths = None, device = 'cuda'):
