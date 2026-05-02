@@ -165,7 +165,7 @@ def plot_error_per_keypoint():
         launch_analyze_menu()
         return
     interactive = get_interactive()
-    plotting.plot_error_per_keypoint(path, project_name, interactive)
+    plotting.plot_error_per_keypoint(path, project_name, interactive=interactive)
     launch_analyze_menu()
 
 

@@ -137,16 +137,21 @@ def plot_error_per_keypoint(path, project_name, min_confidence = None,
     joints_means = np.ma.mean(distances, axis = 0)
 
     barWidth = 0.8
-    joints = np.arange(number_joints)
     joint_labels = [cfg.KEYPOINT_NAMES[i] for i in range(number_joints)]
 
-    cmap = plt.cm.get_cmap('jet')
-    for i in range(0,len(joints)):
-        plt.bar(joints[i], joints_means[i],
-                    width = barWidth, color = cmap(i*(1/number_joints)))
+    means_filled = np.ma.filled(joints_means, fill_value=-np.inf)
+    order = np.argsort(means_filled)[::-1]
+    sorted_means = joints_means[order]
+    sorted_labels = [joint_labels[i] for i in order]
 
-    plt.xticks([r + 0.1 for r in range(len(joints))],
-                joint_labels, rotation=90)
+    cmap = plt.cm.get_cmap('jet')
+    for rank in range(number_joints):
+        plt.bar(rank, sorted_means[rank],
+                    width = barWidth,
+                    color = cmap(rank * (1.0 / number_joints)))
+
+    plt.xticks([r + 0.1 for r in range(number_joints)],
+                sorted_labels, rotation=90)
     plt.savefig(os.path.join(path, "error_per_joint.png"))
     if interactive:
         plt.show()
