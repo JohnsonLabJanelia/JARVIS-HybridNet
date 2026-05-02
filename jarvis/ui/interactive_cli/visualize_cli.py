@@ -217,6 +217,21 @@ def create_videos_2D():
         frame_start = info_yaml['frame_start']
         number_frames = info_yaml['number_frames']
 
+    # If predict2D was run on a folder of cameras, info.yaml's recording_path
+    # is the folder. Derive the per-camera video file from the chosen CSV
+    # (predict2D names CSVs as "<cam_basename>_data2D.csv").
+    if os.path.isdir(recording_path):
+        csv_base = os.path.basename(data_csv)
+        cam_base = csv_base.rsplit('_data2D', 1)[0]
+        candidates = [f for f in os.listdir(recording_path)
+                      if os.path.splitext(f)[0] == cam_base]
+        if not candidates:
+            print(f"{CLIColors.FAIL}Could not find video for camera "
+                  f"'{cam_base}' in {recording_path}{CLIColors.ENDC}")
+            input("Press Enter to go back to main menu...")
+            return
+        recording_path = os.path.join(recording_path, candidates[0])
+
     params = CreateVideos2DParams(project_name, recording_path, data_csv)
 
     params.frame_start = frame_start

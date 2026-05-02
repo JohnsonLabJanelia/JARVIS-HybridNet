@@ -61,11 +61,22 @@ def create_videos2D(params):
                     "make sure your selected segment is not longer that the " \
                     "total video!"
 
+    bbox_size = cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE
+
     for frame_num in tqdm(range(params.number_frames)):
         ret, img_orig = cap.read()
         points2D = points2D_all[frame_num].reshape(-1,3)
 
         if not np.isnan(points2D[0,0]):
+            visible = points2D[~np.isnan(points2D[:,0])]
+            if len(visible):
+                cx = float(visible[:,0].mean())
+                cy = float(visible[:,1].mean())
+                half = bbox_size // 2
+                cv2.rectangle(img_orig,
+                        (int(cx - half), int(cy - half)),
+                        (int(cx + half), int(cy + half)),
+                        (0, 255, 255), 2)
             for line in line_idxs:
                 utils.draw_line(img_orig, line, points2D,
                         img_size, colors[line[1]])
