@@ -382,8 +382,22 @@ class ProjectManager:
         bbox_size = suggested_bbox_size
         bbox_size = self._get_number_from_user(q, suggested_bbox_size, 64)
 
+        # CenterDetect input resolution. Default 320 works for most setups;
+        # bump to 448 (or higher) if your animal is small in the frame —
+        # red3d2jarvis.py prints a data-driven suggestion at export time.
+        cd_default = self.cfg.CENTERDETECT.IMAGE_SIZE
+        print(
+            f"\nCenterDetect 2D Configuration:"
+        )
+        print(
+            f"Use CenterDetect IMAGE_SIZE of {cd_default}? (yes/no)"
+        )
+        q = "Enter custom CenterDetect IMAGE_SIZE, make sure it is divisible by 64:"
+        cd_image_size = self._get_number_from_user(q, cd_default, 64)
+
         self.cfg.KEYPOINTDETECT.BOUNDING_BOX_SIZE = bbox_size
         self.cfg.KEYPOINTDETECT.NUM_JOINTS = dataset2D.num_keypoints[0]
+        self.cfg.CENTERDETECT.IMAGE_SIZE = cd_image_size
         # Default eval cadence — emit val metrics every 5 epochs.
         self.cfg.CENTERDETECT.VAL_INTERVAL = 5
         self.cfg.KEYPOINTDETECT.VAL_INTERVAL = 5
