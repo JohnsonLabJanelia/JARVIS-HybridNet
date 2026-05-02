@@ -6,7 +6,7 @@ Licensed under GNU Lesser General Public License v2.1
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 @dataclass
 class Predict3DParams:
@@ -32,6 +32,7 @@ class Predict2DParams:
     number_frames: int = -1
     progress_bar = None
     trt_mode: str = 'off'
+    selected_videos: Optional[list] = None
 
 
 @dataclass

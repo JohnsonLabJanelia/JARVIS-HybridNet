@@ -51,10 +51,11 @@ def predict2D(params):
     if os.path.isfile(params.recording_path):
         recording_paths.append(params.recording_path)
     elif os.path.exists(params.recording_path):
-        print ("DIRECTORY!")
         multiple_videos = True
-        recording_paths = [os.path.join(params.recording_path, file) for file in os.listdir(params.recording_path)]
-        print (recording_paths)
+        files = os.listdir(params.recording_path)
+        if getattr(params, 'selected_videos', None):
+            files = [f for f in files if f in params.selected_videos]
+        recording_paths = [os.path.join(params.recording_path, f) for f in files]
 
 
     for recording_path in recording_paths:

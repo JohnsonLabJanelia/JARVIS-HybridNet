@@ -57,6 +57,13 @@ def predict_2D():
                 validate = lambda _, x: (os.path.exists(x)))
 
     params = Predict2DParams(project_name, recording_path)
+
+    if os.path.isdir(recording_path):
+        videos = sorted(os.listdir(recording_path))
+        if len(videos) > 1:
+            params.selected_videos = inq.checkbox(
+                        "Select videos to predict on",
+                        choices = videos, default = videos)
     params.trt_mode = get_trt_mode(cfg, "2D")
 
     if params.trt_mode != 'previous':
